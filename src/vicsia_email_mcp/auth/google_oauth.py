@@ -2,6 +2,17 @@
 
 Reads tokens from the same location as workspace-mcp (~/.google_workspace_mcp/credentials/).
 Vicsia handles the OAuth flow — this module only reads and refreshes tokens.
+
+Credential file format (workspace-mcp style):
+{
+    "token": "ya29...",
+    "refresh_token": "1//...",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "client_id": "...",
+    "client_secret": "...",
+    "scopes": [...],
+    "expiry": "2026-04-24T15:30:28.834643"
+}
 """
 
 import json
@@ -25,7 +36,7 @@ def _find_credentials_file() -> Path | None:
     for f in GOOGLE_TOKEN_DIR.glob("*.json"):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
-            if data.get("access_token") or data.get("refresh_token"):
+            if data.get("token") or data.get("refresh_token"):
                 return f
         except (json.JSONDecodeError, OSError):
             continue
@@ -51,7 +62,8 @@ async def get_google_token() -> str | None:
     except (json.JSONDecodeError, OSError):
         return None
 
-    access_token = data.get("access_token", "")
+    # workspace-mcp uses "token" field (not "access_token")
+    access_token = data.get("token", "") or data.get("access_token", "")
     refresh_token = data.get("refresh_token", "")
     expiry = data.get("expiry", "")
 
@@ -71,16 +83,17 @@ async def get_google_token() -> str | None:
         logger.warning("No refresh_token in Google credentials")
         return access_token if access_token else None
 
-    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
-    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    # Use client_id/secret from the credentials file first, then env vars
+    client_id = data.get("client_id", "") or os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    client_secret = data.get("client_secret", "") or os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
     if not client_id or not client_secret:
-        logger.warning("Missing GOOGLE_OAUTH_CLIENT_ID/SECRET for token refresh")
+        logger.warning("Missing client_id/client_secret for Google token refresh")
         return access_token if access_token else None
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
-                GOOGLE_TOKEN_URL,
+                data.get("token_uri", GOOGLE_TOKEN_URL),
                 data={
                     "grant_type": "refresh_token",
                     "client_id": client_id,
@@ -91,8 +104,8 @@ async def get_google_token() -> str | None:
             resp.raise_for_status()
             token_data = resp.json()
 
-        # Update credentials file
-        data["access_token"] = token_data["access_token"]
+        # Update credentials file (same format as workspace-mcp)
+        data["token"] = token_data["access_token"]
         if "refresh_token" in token_data:
             data["refresh_token"] = token_data["refresh_token"]
         if "expires_in" in token_data:
