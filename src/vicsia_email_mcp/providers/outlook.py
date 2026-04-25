@@ -26,14 +26,19 @@ class OutlookProvider(EmailProvider):
     async def search_emails(self, query: str, max_results: int = 10) -> list[Email]:
         client, headers = await self._get_client()
         async with client:
+            # Graph API: $search and $orderby cannot be combined
+            params: dict = {
+                "$top": max_results,
+                "$select": "id,subject,from,receivedDateTime,bodyPreview",
+            }
+            if query and query.lower() not in ("inbox", "all", "*"):
+                params["$search"] = f'"{query}"'
+            else:
+                params["$orderby"] = "receivedDateTime desc"
+
             resp = await client.get(
                 f"{GRAPH_API}/me/messages",
-                params={
-                    "$search": f'"{query}"',
-                    "$top": max_results,
-                    "$select": "id,subject,from,receivedDateTime,bodyPreview",
-                    "$orderby": "receivedDateTime desc",
-                },
+                params=params,
                 headers=headers,
             )
             resp.raise_for_status()
