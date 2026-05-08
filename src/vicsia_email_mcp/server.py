@@ -38,14 +38,15 @@ def get_provider() -> EmailProvider:
     provider_name = os.environ.get("EMAIL_PROVIDER", "").lower()
 
     if not provider_name:
-        # 2. Auto-detect from credentials
+        # 2. Auto-detect from credentials — Outlook first to avoid Gmail bleed-over
+        # when vicsia-outlook subprocess starts without EMAIL_PROVIDER (stale config)
         from .auth.google_oauth import has_google_credentials
         from .auth.ms_token import has_outlook_credentials
 
-        if has_google_credentials():
-            provider_name = "gmail"
-        elif has_outlook_credentials():
+        if has_outlook_credentials():
             provider_name = "outlook"
+        elif has_google_credentials():
+            provider_name = "gmail"
 
     if provider_name == "gmail":
         from .providers.gmail import GmailProvider
