@@ -36,8 +36,10 @@ class OutlookProvider(EmailProvider):
             else:
                 params["$orderby"] = "receivedDateTime desc"
 
+            # Scope explicite à Inbox — /me/messages couvre toute la mailbox
+            # (drafts, sent, deleted, clutter) et $search aussi malgré la doc MS.
             resp = await client.get(
-                f"{GRAPH_API}/me/messages",
+                f"{GRAPH_API}/me/mailFolders/inbox/messages",
                 params=params,
                 headers=headers,
             )
