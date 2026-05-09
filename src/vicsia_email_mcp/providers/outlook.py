@@ -1,6 +1,8 @@
 """Outlook/MS365 provider — direct Microsoft Graph API calls."""
 
 import logging
+import os
+import re
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -11,6 +13,25 @@ from .base import CalendarEvent, DraftResult, Email, EmailProvider, EventResult
 logger = logging.getLogger(__name__)
 
 GRAPH_API = "https://graph.microsoft.com/v1.0"
+
+_OFFSET_RE = re.compile(r"([+-]\d{2}:?\d{2}|Z)$")
+
+
+def _to_graph_datetime(dt_str: str) -> dict:
+    """Convert an ISO datetime to Graph's dateTimeTimeZone format.
+
+    Si dt_str contient un offset (ex: +02:00 ou Z) → conversion en UTC pour éviter
+    le double-décalage avec timeZone. Sinon → utilise VICSIA_USER_TZ (défaut UTC).
+    """
+    if _OFFSET_RE.search(dt_str):
+        try:
+            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+            utc = dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            return {"dateTime": utc, "timeZone": "UTC"}
+        except ValueError:
+            pass  # ISO invalide — laisse Graph répondre 400
+    user_tz = os.environ.get("VICSIA_USER_TZ", "UTC")
+    return {"dateTime": dt_str, "timeZone": user_tz}
 
 
 class OutlookProvider(EmailProvider):
@@ -88,31 +109,27 @@ class OutlookProvider(EmailProvider):
         client, headers = await self._get_client()
         async with client:
             if reply_to:
-                # Create reply draft
+                # createReply avec 'comment' insère le texte AU-DESSUS du quote — Graph
+                # construit le draft avec l'historique cité préservé. C'est la voie
+                # documentée. Le PATCH body écrasait tout le quote → perte de contexte.
                 resp = await client.post(
                     f"{GRAPH_API}/me/messages/{reply_to}/createReply",
+                    json={"comment": body},
                     headers=headers,
                 )
                 resp.raise_for_status()
-                reply_msg = resp.json()
-
-                # Update the reply draft with our content
-                resp = await client.patch(
-                    f"{GRAPH_API}/me/messages/{reply_msg['id']}",
-                    json={"body": {"contentType": "text", "content": body}},
-                    headers=headers,
-                )
-                resp.raise_for_status()
-                return DraftResult(id=reply_msg["id"])
+                return DraftResult(id=resp.json().get("id", ""))
             else:
-                # Create new draft
-                draft_body = {
+                draft_body: dict = {
                     "subject": subject,
                     "body": {"contentType": "text", "content": body},
-                    "isDraft": True,
                 }
                 if to:
-                    draft_body["toRecipients"] = [{"emailAddress": {"address": addr.strip()}} for addr in to.split(",")]
+                    addresses = [addr.strip() for addr in to.split(",") if addr.strip()]
+                    if addresses:
+                        draft_body["toRecipients"] = [
+                            {"emailAddress": {"address": addr}} for addr in addresses
+                        ]
 
                 resp = await client.post(
                     f"{GRAPH_API}/me/messages",
@@ -161,10 +178,10 @@ class OutlookProvider(EmailProvider):
     async def create_event(self, title: str, start: str, end: str, description: str = "") -> EventResult:
         client, headers = await self._get_client()
         async with client:
-            event_body = {
+            event_body: dict = {
                 "subject": title,
-                "start": {"dateTime": start, "timeZone": "UTC"},
-                "end": {"dateTime": end, "timeZone": "UTC"},
+                "start": _to_graph_datetime(start),
+                "end": _to_graph_datetime(end),
             }
             if description:
                 event_body["body"] = {"contentType": "text", "content": description}

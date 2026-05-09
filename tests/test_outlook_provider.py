@@ -120,3 +120,148 @@ class TestReadEmailKeepsFullMailboxAccess:
         # /me/messages/{id} — pas dans un dossier specifique
         assert called_url.endswith("/me/messages/msg-id-xyz")
         assert "mailFolders" not in called_url
+
+
+def _make_mock_post_response(returned_id: str):
+    """Helper: mock httpx response pour POST avec un id de retour."""
+    resp = MagicMock()
+    resp.json.return_value = {"id": returned_id}
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+def _make_mock_client(post_response):
+    """Helper: mock httpx.AsyncClient context manager."""
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.post = AsyncMock(return_value=post_response)
+    return client
+
+
+class TestCreateDraftReplyPreservesQuote:
+    """Bug critique: l'ancienne impl (createReply puis PATCH body) écrasait le
+    quote du fil mail. Le fix utilise le 'comment' parameter de createReply qui
+    insère le texte au-dessus du quote sans le perdre.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reply_uses_comment_param_not_patch(self):
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = _make_mock_post_response("draft-reply-id")
+        mock_client = _make_mock_client(mock_resp)
+        # Garde-fou: PATCH ne doit JAMAIS être appelé (sinon on écrase le quote)
+        mock_client.patch = AsyncMock(side_effect=AssertionError("PATCH écrase le quote — ne doit pas être appelé"))
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            result = await provider.create_draft("", "", "Ma réponse", reply_to="msg-original-id")
+
+        assert result.id == "draft-reply-id"
+        called_url = mock_client.post.call_args[0][0]
+        assert called_url.endswith("/me/messages/msg-original-id/createReply")
+        # Le body de la requête doit utiliser 'comment' (pas 'body')
+        json_payload = mock_client.post.call_args.kwargs["json"]
+        assert json_payload == {"comment": "Ma réponse"}, (
+            "createReply doit recevoir {'comment': body} pour préserver le quote du fil"
+        )
+
+
+class TestCreateDraftFiltersEmptyRecipients:
+    """to='a@b.com, , c@d.com' ne doit pas envoyer un destinataire vide à Graph
+    (qui répondrait 400). Filtre les chaînes vides après split.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_recipients_filtered_out(self):
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = _make_mock_post_response("draft-id")
+        mock_client = _make_mock_client(mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.create_draft("a@b.com,  ,c@d.com,", "Sujet", "Corps")
+
+        json_payload = mock_client.post.call_args.kwargs["json"]
+        recipients = json_payload.get("toRecipients", [])
+        addresses = [r["emailAddress"]["address"] for r in recipients]
+        assert addresses == ["a@b.com", "c@d.com"], (
+            f"Destinataires vides doivent être filtrés. Reçu: {addresses}"
+        )
+
+
+class TestCreateEventTimezoneHandling:
+    """Bug critique: ancien code envoyait timeZone='UTC' avec un dateTime contenant
+    déjà un offset → double conversion non-déterministe → RDV à la mauvaise heure.
+
+    Doc MS: dateTimeTimeZone exige cohérence entre dateTime et timeZone.
+    Fix: si offset présent → convertir en UTC. Sinon → utiliser VICSIA_USER_TZ.
+    """
+
+    @pytest.mark.asyncio
+    async def test_offset_in_start_converted_to_utc(self):
+        """start='2026-05-09T14:00:00+02:00' → dateTime='2026-05-09T12:00:00' tz='UTC'."""
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = _make_mock_post_response("event-id")
+        mock_client = _make_mock_client(mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.create_event(
+                "Meeting",
+                "2026-05-09T14:00:00+02:00",
+                "2026-05-09T15:00:00+02:00",
+            )
+
+        json_payload = mock_client.post.call_args.kwargs["json"]
+        # 14h Paris (+02:00) = 12h UTC
+        assert json_payload["start"] == {"dateTime": "2026-05-09T12:00:00", "timeZone": "UTC"}
+        assert json_payload["end"] == {"dateTime": "2026-05-09T13:00:00", "timeZone": "UTC"}
+
+    @pytest.mark.asyncio
+    async def test_no_offset_uses_user_timezone_env(self, monkeypatch):
+        """start='2026-05-09T14:00:00' (sans offset) + VICSIA_USER_TZ='Europe/Paris'
+        → dateTime tel quel + timeZone='Europe/Paris'.
+        """
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        monkeypatch.setenv("VICSIA_USER_TZ", "Europe/Paris")
+
+        mock_resp = _make_mock_post_response("event-id")
+        mock_client = _make_mock_client(mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.create_event(
+                "Meeting",
+                "2026-05-09T14:00:00",
+                "2026-05-09T15:00:00",
+            )
+
+        json_payload = mock_client.post.call_args.kwargs["json"]
+        assert json_payload["start"] == {"dateTime": "2026-05-09T14:00:00", "timeZone": "Europe/Paris"}
+        assert json_payload["end"] == {"dateTime": "2026-05-09T15:00:00", "timeZone": "Europe/Paris"}
+
+    @pytest.mark.asyncio
+    async def test_no_offset_no_env_defaults_utc(self, monkeypatch):
+        """Sans offset ET sans VICSIA_USER_TZ → fallback UTC (rétrocompat)."""
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        monkeypatch.delenv("VICSIA_USER_TZ", raising=False)
+
+        mock_resp = _make_mock_post_response("event-id")
+        mock_client = _make_mock_client(mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.create_event(
+                "Meeting",
+                "2026-05-09T14:00:00",
+                "2026-05-09T15:00:00",
+            )
+
+        json_payload = mock_client.post.call_args.kwargs["json"]
+        assert json_payload["start"] == {"dateTime": "2026-05-09T14:00:00", "timeZone": "UTC"}
