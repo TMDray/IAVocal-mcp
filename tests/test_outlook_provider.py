@@ -192,6 +192,222 @@ class TestCreateDraftFiltersEmptyRecipients:
         )
 
 
+class TestReadEmailUsesPreferTextBody:
+    """Bug évité: au lieu d'un strip_html maison fragile (laissait CSS/JS dans
+    le body, ne décodait pas les entities exotiques), on délègue à Graph via le
+    header Prefer. Graph retourne du texte propre directement.
+    """
+
+    @pytest.mark.asyncio
+    async def test_read_email_sends_prefer_text_body_header(self):
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "id": "msg1",
+            "subject": "Test",
+            "from": {"emailAddress": {"name": "X", "address": "x@y.com"}},
+            "receivedDateTime": "2026-04-25",
+            "body": {"content": "Hello clean text", "contentType": "text"},
+            "bodyPreview": "Hello",
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {"Authorization": "Bearer X"}))):
+            email = await provider.read_email("msg1")
+
+        # Le header Prefer doit être présent, sinon Graph renvoie du HTML
+        sent_headers = mock_client.get.call_args.kwargs["headers"]
+        assert "Prefer" in sent_headers
+        assert 'outlook.body-content-type="text"' in sent_headers["Prefer"]
+        # Le body est utilisé brut (plus de strip maison)
+        assert email.body == "Hello clean text"
+
+
+class TestListEventsDirect:
+    """Couverture directe de list_events — pas seulement via mock du serveur."""
+
+    @pytest.mark.asyncio
+    async def test_list_events_uses_calendarview_endpoint(self):
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"value": []}
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.list_events(7)
+
+        called_url = mock_client.get.call_args[0][0]
+        assert called_url.endswith("/me/calendarview"), (
+            "list_events doit utiliser /me/calendarview (qui expand les recurrences) "
+            "et non /me/events (qui retourne les masters de série non-expandées)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_events_parses_full_response(self):
+        """Vérifie le parsing : title, start, end, location, attendees."""
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "value": [
+                {
+                    "id": "ev1",
+                    "subject": "Standup",
+                    "start": {"dateTime": "2026-05-09T09:00:00", "timeZone": "UTC"},
+                    "end": {"dateTime": "2026-05-09T09:30:00", "timeZone": "UTC"},
+                    "location": {"displayName": "Salle 3"},
+                    "bodyPreview": "Daily standup",
+                    "attendees": [
+                        {"emailAddress": {"address": "a@x.com"}},
+                        {"emailAddress": {"address": "b@x.com"}},
+                    ],
+                }
+            ]
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            events = await provider.list_events(7)
+
+        assert len(events) == 1
+        ev = events[0]
+        assert ev.id == "ev1"
+        assert ev.title == "Standup"
+        assert ev.start == "2026-05-09T09:00:00"
+        assert ev.end == "2026-05-09T09:30:00"
+        assert ev.location == "Salle 3"
+        assert ev.attendees == ["a@x.com", "b@x.com"]
+
+    @pytest.mark.asyncio
+    async def test_list_events_handles_missing_optional_fields(self):
+        """Événement sans location ni attendees — ne doit pas crasher."""
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "value": [
+                {
+                    "id": "ev2",
+                    "subject": "Solo",
+                    "start": {"dateTime": "2026-05-09T10:00:00"},
+                    "end": {"dateTime": "2026-05-09T11:00:00"},
+                    # pas de location, pas d'attendees
+                }
+            ]
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            events = await provider.list_events(7)
+
+        assert events[0].location == ""
+        assert events[0].attendees == []
+
+
+class TestCreateDraftNewEmail:
+    """Couverture directe création d'un nouveau draft (pas reply)."""
+
+    @pytest.mark.asyncio
+    async def test_new_draft_with_single_recipient(self):
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = _make_mock_post_response("draft-id")
+        mock_client = _make_mock_client(mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            result = await provider.create_draft("user@example.com", "Sujet", "Corps du mail")
+
+        assert result.id == "draft-id"
+        called_url = mock_client.post.call_args[0][0]
+        assert called_url.endswith("/me/messages")  # nouveau draft, pas /createReply
+
+        json_payload = mock_client.post.call_args.kwargs["json"]
+        assert json_payload["subject"] == "Sujet"
+        assert json_payload["body"] == {"contentType": "text", "content": "Corps du mail"}
+        assert json_payload["toRecipients"] == [
+            {"emailAddress": {"address": "user@example.com"}}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_new_draft_with_multiple_recipients(self):
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = _make_mock_post_response("draft-id")
+        mock_client = _make_mock_client(mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.create_draft("a@x.com,b@x.com,c@x.com", "Multi", "Body")
+
+        json_payload = mock_client.post.call_args.kwargs["json"]
+        addresses = [r["emailAddress"]["address"] for r in json_payload["toRecipients"]]
+        assert addresses == ["a@x.com", "b@x.com", "c@x.com"]
+
+
+class TestCreateEventWithDescription:
+    """create_event avec description doit ajouter le body au payload."""
+
+    @pytest.mark.asyncio
+    async def test_description_added_as_body(self):
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = _make_mock_post_response("event-id")
+        mock_client = _make_mock_client(mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.create_event(
+                "Meeting",
+                "2026-05-09T14:00:00Z",
+                "2026-05-09T15:00:00Z",
+                description="Agenda du sprint",
+            )
+
+        json_payload = mock_client.post.call_args.kwargs["json"]
+        assert json_payload["body"] == {"contentType": "text", "content": "Agenda du sprint"}
+
+    @pytest.mark.asyncio
+    async def test_no_description_omits_body(self):
+        from vicsia_email_mcp.providers.outlook import OutlookProvider
+
+        mock_resp = _make_mock_post_response("event-id")
+        mock_client = _make_mock_client(mock_resp)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.create_event("Meeting", "2026-05-09T14:00:00Z", "2026-05-09T15:00:00Z")
+
+        json_payload = mock_client.post.call_args.kwargs["json"]
+        assert "body" not in json_payload
+
+
 class TestCreateEventTimezoneHandling:
     """Bug critique: ancien code envoyait timeZone='UTC' avec un dateTime contenant
     déjà un offset → double conversion non-déterministe → RDV à la mauvaise heure.

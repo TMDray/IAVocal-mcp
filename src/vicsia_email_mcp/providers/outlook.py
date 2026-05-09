@@ -82,27 +82,26 @@ class OutlookProvider(EmailProvider):
     async def read_email(self, email_id: str) -> Email:
         client, headers = await self._get_client()
         async with client:
+            # Prefer header: Graph fait la conversion HTML→texte côté serveur,
+            # bien plus robuste qu'un strip maison (gère style/script/entities,
+            # newsletters, formats Outlook spécifiques).
+            req_headers = {**headers, "Prefer": 'outlook.body-content-type="text"'}
             resp = await client.get(
                 f"{GRAPH_API}/me/messages/{email_id}",
                 params={"$select": "id,subject,from,receivedDateTime,body,bodyPreview"},
-                headers=headers,
+                headers=req_headers,
             )
             resp.raise_for_status()
             msg = resp.json()
 
             sender = msg.get("from", {}).get("emailAddress", {})
-            body_content = msg.get("body", {}).get("content", "")
-            # Strip HTML if content type is HTML
-            if msg.get("body", {}).get("contentType", "").lower() == "html":
-                body_content = _strip_html(body_content)
-
             return Email(
                 id=msg.get("id", ""),
                 subject=msg.get("subject", ""),
                 sender=f"{sender.get('name', '')} <{sender.get('address', '')}>",
                 date=msg.get("receivedDateTime", ""),
                 snippet=msg.get("bodyPreview", ""),
-                body=body_content,
+                body=msg.get("body", {}).get("content", ""),
             )
 
     async def create_draft(self, to: str, subject: str, body: str, reply_to: str = "") -> DraftResult:
@@ -195,16 +194,3 @@ class OutlookProvider(EmailProvider):
             return EventResult(id=resp.json().get("id", ""))
 
 
-def _strip_html(html: str) -> str:
-    """Basic HTML to text conversion."""
-    import re
-
-    text = re.sub(r"<br\s*/?>", "\n", html)
-    text = re.sub(r"<p[^>]*>", "\n", text)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"&nbsp;", " ", text)
-    text = re.sub(r"&amp;", "&", text)
-    text = re.sub(r"&lt;", "<", text)
-    text = re.sub(r"&gt;", ">", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
