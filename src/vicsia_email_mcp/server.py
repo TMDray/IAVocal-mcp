@@ -64,8 +64,10 @@ def get_provider() -> EmailProvider:
 @mcp.tool()
 async def search_emails(query: str, max_results: int = 10) -> str:
     """Search emails by query. Returns subject, sender, date, preview for each result."""
+    logger.info("[search_emails] query=%r max_results=%d", query, max_results)
     provider = get_provider()
     results = await provider.search_emails(query, min(max_results, 20))
+    logger.info("[search_emails] → count=%d", len(results))
 
     if not results:
         return "No emails found."
@@ -84,8 +86,10 @@ async def search_emails(query: str, max_results: int = 10) -> str:
 @mcp.tool()
 async def read_email(email_id: str) -> str:
     """Read the full content of an email by its ID."""
+    logger.info("[read_email] email_id=%r", email_id)
     provider = get_provider()
     em = await provider.read_email(email_id)
+    logger.info("[read_email] → subject=%r body_len=%d", em.subject, len(em.body or ""))
 
     return (
         f"De: {em.sender}\n"
@@ -99,8 +103,13 @@ async def read_email(email_id: str) -> str:
 @mcp.tool()
 async def create_draft(to: str = "", subject: str = "", body: str = "", reply_to: str = "") -> str:
     """Create an email draft. Does NOT send it. Use reply_to with an email ID to create a reply draft."""
+    logger.info(
+        "[create_draft] to=%r subject_len=%d body_len=%d reply_to=%r",
+        to, len(subject), len(body), reply_to,
+    )
     provider = get_provider()
     result = await provider.create_draft(to, subject, body, reply_to)
+    logger.info("[create_draft] → id=%r", result.id)
     return f"Draft created (id: {result.id})"
 
 
@@ -110,8 +119,10 @@ async def create_draft(to: str = "", subject: str = "", body: str = "", reply_to
 @mcp.tool()
 async def list_events(days: int = 7) -> str:
     """List upcoming calendar events for the next N days. Beta feature."""
+    logger.info("[list_events] days=%d", days)
     provider = get_provider()
     events = await provider.list_events(min(days, 30))
+    logger.info("[list_events] → count=%d", len(events))
 
     if not events:
         return "No events found."
@@ -139,6 +150,8 @@ async def create_event(title: str, start: str, end: str, description: str = "") 
         end: End time (ISO 8601 format)
         description: Optional event description
     """
+    logger.info("[create_event] title=%r start=%r end=%r", title, start, end)
     provider = get_provider()
     result = await provider.create_event(title, start, end, description)
+    logger.info("[create_event] → id=%r", result.id)
     return f"Event created (id: {result.id})"

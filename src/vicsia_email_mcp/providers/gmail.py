@@ -30,13 +30,17 @@ class GmailProvider(EmailProvider):
         client, headers = await self._get_client()
         async with client:
             # Search for message IDs
+            params = {"q": query, "maxResults": max_results}
+            logger.info("[gmail] GET %s/messages params=%s", GMAIL_API, params)
             resp = await client.get(
                 f"{GMAIL_API}/messages",
-                params={"q": query, "maxResults": max_results},
+                params=params,
                 headers=headers,
             )
+            logger.info("[gmail] ← status=%d", resp.status_code)
             resp.raise_for_status()
             messages = resp.json().get("messages", [])
+            logger.info("[gmail] messages_found=%d", len(messages))
 
             results = []
             for msg_ref in messages[:max_results]:

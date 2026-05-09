@@ -38,11 +38,10 @@ class OutlookProvider(EmailProvider):
 
             # Scope explicite à Inbox — /me/messages couvre toute la mailbox
             # (drafts, sent, deleted, clutter) et $search aussi malgré la doc MS.
-            resp = await client.get(
-                f"{GRAPH_API}/me/mailFolders/inbox/messages",
-                params=params,
-                headers=headers,
-            )
+            url = f"{GRAPH_API}/me/mailFolders/inbox/messages"
+            logger.info("[outlook] GET %s params=%s", url, {k: v for k, v in params.items() if k != "$select"})
+            resp = await client.get(url, params=params, headers=headers)
+            logger.info("[outlook] ← status=%d", resp.status_code)
             resp.raise_for_status()
 
             results = []
