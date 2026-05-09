@@ -17,7 +17,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-MS365_CLIENT_ID = os.environ.get("MS365_MCP_CLIENT_ID", "084a3e9f-a9f4-43f7-89f9-d229cf97853e")
+MS365_CLIENT_ID = os.environ.get("MS365_MCP_CLIENT_ID", "9c24b7f1-b763-4da7-86ba-e180cfbf5940")
 MS365_AUTHORITY = "https://login.microsoftonline.com/common/oauth2/v2.0"
 MS365_SCOPES = "User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite offline_access"
 MS365_TOKEN_PATH = Path.home() / ".vicsia" / "ms365_token.json"

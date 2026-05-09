@@ -7,11 +7,10 @@ Tools:
   - list_events: List upcoming calendar events (beta)
   - create_event: Create a calendar event (beta)
 
-Provider auto-detection:
-  1. EMAIL_PROVIDER env var (gmail|outlook)
-  2. Google credentials present → Gmail
-  3. Outlook token present → Outlook
-  4. Error if none configured
+Provider selection: EMAIL_PROVIDER env var ("gmail" | "outlook") — REQUIRED.
+Pas d'auto-detection : risque de bleed-over si les deux comptes OAuth ont été
+configurés sur la même machine. L'appelant (Vicsia) injecte EMAIL_PROVIDER
+explicitement par MCP pour garantir l'isolement Gmail/Outlook.
 """
 
 import logging
@@ -29,24 +28,16 @@ _provider: EmailProvider | None = None
 
 
 def get_provider() -> EmailProvider:
-    """Get or create the email provider (lazy singleton)."""
+    """Get or create the email provider (lazy singleton).
+
+    EMAIL_PROVIDER doit être défini explicitement (gmail|outlook).
+    Si absent ou invalide → RuntimeError immédiate.
+    """
     global _provider
     if _provider is not None:
         return _provider
 
-    # 1. Explicit env var
     provider_name = os.environ.get("EMAIL_PROVIDER", "").lower()
-
-    if not provider_name:
-        # 2. Auto-detect from credentials — Outlook first to avoid Gmail bleed-over
-        # when vicsia-outlook subprocess starts without EMAIL_PROVIDER (stale config)
-        from .auth.google_oauth import has_google_credentials
-        from .auth.ms_token import has_outlook_credentials
-
-        if has_outlook_credentials():
-            provider_name = "outlook"
-        elif has_google_credentials():
-            provider_name = "gmail"
 
     if provider_name == "gmail":
         from .providers.gmail import GmailProvider
@@ -60,8 +51,8 @@ def get_provider() -> EmailProvider:
         logger.info("Email provider: Outlook")
     else:
         raise RuntimeError(
-            "No email provider configured. "
-            "Set EMAIL_PROVIDER=gmail|outlook or connect via Vicsia."
+            f"EMAIL_PROVIDER must be 'gmail' or 'outlook' (got: {provider_name!r}). "
+            "Set the env var explicitly — no auto-detection."
         )
 
     return _provider
