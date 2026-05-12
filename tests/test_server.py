@@ -59,7 +59,7 @@ class TestSearchEmails:
         with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
             from vicsia_email_mcp.server import search_emails
             await search_emails("test", 50)
-            mock_gmail_provider.search_emails.assert_called_once_with("test", 20)
+            mock_gmail_provider.search_emails.assert_called_once_with("test", 30)
 
 
 class TestReadEmail:
@@ -71,6 +71,105 @@ class TestReadEmail:
             assert "jean@test.com" in result
             assert "Reunion" in result
             assert "Je confirme la reunion" in result
+
+    @pytest.mark.asyncio
+    async def test_strip_quotes_false_by_default(self, mock_gmail_provider):
+        """Comportement par defaut inchange — les quotes sont presentes."""
+        body_with_quotes = "Ma reponse.\n\nLe 9 mai, Jean a écrit :\n> Message initial"
+        mock_gmail_provider.read_email.return_value = AsyncMock(
+            id="msg1", subject="Re: test", sender="a@t.com", date="2026-05-11",
+            snippet="", body=body_with_quotes,
+        )
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import read_email
+            result = await read_email("msg1")
+        assert "Le 9 mai, Jean a écrit :" in result
+        assert "Message initial" in result
+
+    @pytest.mark.asyncio
+    async def test_strip_quotes_true_removes_history(self, mock_gmail_provider):
+        """strip_quotes=True retire la chaine de reponses, garde le nouveau contenu."""
+        body_with_quotes = "Ma reponse.\n\nLe 9 mai, Jean a écrit :\n> Message initial"
+        mock_gmail_provider.read_email.return_value = AsyncMock(
+            id="msg1", subject="Re: test", sender="a@t.com", date="2026-05-11",
+            snippet="", body=body_with_quotes,
+        )
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import read_email
+            result = await read_email("msg1", strip_quotes=True)
+        assert "Ma reponse." in result
+        assert "Le 9 mai, Jean a écrit :" not in result
+        assert "Message initial" not in result
+
+
+class TestPreviewEmails:
+    @pytest.mark.asyncio
+    async def test_returns_preview_for_each_id(self, mock_gmail_provider):
+        mock_gmail_provider.read_email.return_value = AsyncMock(
+            id="msg1", subject="Reunion", sender="jean@test.com",
+            date="2026-05-11", snippet="", body="Bonjour, je confirme la reunion de mardi.",
+        )
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import preview_emails
+            result = await preview_emails(["msg1"])
+        assert "Reunion" in result
+        assert "jean@test.com" in result
+        assert "je confirme la reunion" in result
+        assert "msg1" in result
+
+    @pytest.mark.asyncio
+    async def test_capped_at_10_ids(self, mock_gmail_provider):
+        mock_gmail_provider.read_email.return_value = AsyncMock(
+            id="x", subject="S", sender="a@t.com", date="2026-05-11",
+            snippet="", body="Contenu.",
+        )
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import preview_emails
+            await preview_emails([f"id{i}" for i in range(15)])
+        assert mock_gmail_provider.read_email.call_count == 10
+
+    @pytest.mark.asyncio
+    async def test_body_truncated_at_400_chars(self, mock_gmail_provider):
+        long_body = "A" * 600
+        mock_gmail_provider.read_email.return_value = AsyncMock(
+            id="msg1", subject="Long", sender="a@t.com", date="2026-05-11",
+            snippet="", body=long_body,
+        )
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import preview_emails
+            result = await preview_emails(["msg1"])
+        assert result.count("A") == 400
+        assert "…" in result
+
+    @pytest.mark.asyncio
+    async def test_quotes_stripped_automatically(self, mock_gmail_provider):
+        body = "Nouveau contenu.\n\nLe 9 mai, Jean a écrit :\n> Ancien message"
+        mock_gmail_provider.read_email.return_value = AsyncMock(
+            id="msg1", subject="Re: test", sender="a@t.com", date="2026-05-11",
+            snippet="", body=body,
+        )
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import preview_emails
+            result = await preview_emails(["msg1"])
+        assert "Nouveau contenu." in result
+        assert "Ancien message" not in result
+
+    @pytest.mark.asyncio
+    async def test_failed_id_does_not_crash_others(self, mock_gmail_provider):
+        """Un ID invalide produit un message d'erreur mais n'interrompt pas les autres."""
+        import httpx
+        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response.status_code = 404
+        mock_gmail_provider.read_email.side_effect = [
+            httpx.HTTPStatusError("Not found", request=AsyncMock(spec=httpx.Request), response=mock_response),
+            AsyncMock(id="msg2", subject="OK", sender="b@t.com", date="2026-05-11",
+                      snippet="", body="Contenu valide."),
+        ]
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import preview_emails
+            result = await preview_emails(["bad_id", "msg2"])
+        assert "erreur" in result
+        assert "Contenu valide." in result
 
 
 class TestCreateDraft:
@@ -278,3 +377,195 @@ class TestEncryptedTokenReading:
             f"Got {result!r} — devrait etre None pour eviter d'envoyer un ciphertext "
             "comme Bearer token. C'etait LE bug initial."
         )
+
+
+# ==================== Robustness tests (Phase 2 — diagnose real crash causes) ====================
+
+
+class TestRobustnessSearchHugeSnippets:
+    """Provider renvoie 20 mails avec snippets enormes (2000 chars chacun).
+
+    Verifie que la sortie est bornee grace au [:150] dans server.py — sinon
+    20 × 2000 = 40 000 chars de body retournes = risque saturation contexte LLM.
+    """
+
+    @pytest.mark.asyncio
+    async def test_snippets_truncated_to_150_chars(self, mock_gmail_provider):
+        huge = "x" * 2000
+        mock_gmail_provider.search_emails.return_value = [
+            Email(id=f"m{i}", subject=f"S{i}", sender=f"a{i}@t.com", date="2026-05-11", snippet=huge)
+            for i in range(20)
+        ]
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import search_emails
+            result = await search_emails("test", 20)
+
+        # Chaque ligne "Apercu: ..." doit etre bornee par 150 chars de body + le prefixe
+        # On verifie que le body total des apercus tient dans 150 * 20 = 3000 chars
+        # (et pas 2000 * 20 = 40000 chars)
+        # On compte les "x" presents — il devrait y en avoir au max 150 * 20 = 3000
+        x_count = result.count("x")
+        assert x_count <= 150 * 20, (
+            f"Snippets non tronques: {x_count} 'x' dans la sortie "
+            f"(attendu <= 3000). Risque saturation contexte."
+        )
+
+
+class TestRobustnessReadEmailHugeBody:
+    """read_email avec un corps de 50 KB.
+
+    Documente le comportement ACTUEL : aucune troncature → tout le body
+    est retourne. Si ce test passe avec 50 KB sans crash, on sait que le
+    point de saturation est plus loin (cote LLM, pas cote MCP).
+    """
+
+    @pytest.mark.asyncio
+    async def test_50kb_body_returned_in_full(self, mock_gmail_provider):
+        huge_body = "A" * 50_000
+        mock_gmail_provider.read_email.return_value = Email(
+            id="big",
+            subject="Newsletter",
+            sender="news@test.com",
+            date="2026-05-11",
+            snippet="preview",
+            body=huge_body,
+        )
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import read_email
+            result = await read_email("big")
+
+        assert len(result) >= 50_000, (
+            "read_email tronque deja le body — verifier si c'est intentionnel"
+        )
+        assert result.count("A") >= 50_000
+
+
+class TestRobustnessProviderHTTP500:
+    """Provider leve httpx.HTTPStatusError 500 (erreur serveur Gmail/Graph).
+
+    Comportement attendu : exception propre qui remonte vers FastMCP,
+    pas un crash du process MCP.
+    """
+
+    @pytest.mark.asyncio
+    async def test_500_propagates_cleanly(self, mock_gmail_provider):
+        import httpx
+        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response.status_code = 500
+        mock_gmail_provider.search_emails.side_effect = httpx.HTTPStatusError(
+            "Server error", request=AsyncMock(spec=httpx.Request), response=mock_response
+        )
+
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import search_emails
+            with pytest.raises(httpx.HTTPStatusError):
+                await search_emails("test", 10)
+
+
+class TestRobustnessProvider401Expired:
+    """Provider leve une erreur d'authentification (token expire).
+
+    Comportement attendu : exception identifiable, pas un crash silencieux
+    avec un Bearer invalide qui partirait en boucle.
+    """
+
+    @pytest.mark.asyncio
+    async def test_401_propagates_with_clear_message(self, mock_gmail_provider):
+        import httpx
+        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response.status_code = 401
+        mock_gmail_provider.search_emails.side_effect = httpx.HTTPStatusError(
+            "Unauthorized", request=AsyncMock(spec=httpx.Request), response=mock_response
+        )
+
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import search_emails
+            with pytest.raises(httpx.HTTPStatusError) as exc_info:
+                await search_emails("test", 10)
+            assert exc_info.value.response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_runtime_error_not_authenticated(self, mock_gmail_provider):
+        """Cas RuntimeError 'Google not authenticated' lance par le provider."""
+        mock_gmail_provider.search_emails.side_effect = RuntimeError(
+            "Google not authenticated — connect via Vicsia Connexions page"
+        )
+
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import search_emails
+            with pytest.raises(RuntimeError, match="not authenticated"):
+                await search_emails("test", 10)
+
+
+class TestRobustnessMalformedResponse:
+    """Provider renvoie des Email avec champs manquants/vides.
+
+    Cas reels :
+    - sender vide (ex: mail systeme sans From propre)
+    - subject None ou vide
+    - snippet absent / None
+    - date au mauvais format
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_fields_dont_crash(self, mock_gmail_provider):
+        mock_gmail_provider.search_emails.return_value = [
+            Email(id="ok", subject="", sender="", date="", snippet=""),
+            Email(id="partial", subject="Hi", sender="x@y.com", date="", snippet=""),
+        ]
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import search_emails
+            result = await search_emails("test", 10)
+
+        assert "ok" in result
+        assert "partial" in result
+
+    @pytest.mark.asyncio
+    async def test_read_email_with_none_body(self, mock_gmail_provider):
+        """Body None doit etre gere — actuellement le format string ferait 'None'."""
+        mock_gmail_provider.read_email.return_value = Email(
+            id="no_body", subject="Vide", sender="x@y.com", date="2026-05-11",
+            snippet="", body=None
+        )
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import read_email
+            result = await read_email("no_body")
+        # Doit pas crasher — verifie juste qu'on a quelque chose de propre
+        assert "Vide" in result
+
+
+class TestRobustnessConcurrentCalls:
+    """Deux search_emails appeles en parallele.
+
+    Verifie qu'il n'y a pas de race condition sur le singleton _provider
+    ni de melange de resultats entre les deux appels.
+    """
+
+    @pytest.mark.asyncio
+    async def test_two_concurrent_searches(self, mock_gmail_provider):
+        import asyncio
+
+        call_count = {"n": 0}
+
+        async def search_with_delay(query, max_results):
+            call_count["n"] += 1
+            await asyncio.sleep(0.01)
+            return [
+                Email(id=f"{query}_1", subject=f"Result for {query}",
+                      sender="a@t.com", date="2026-05-11", snippet=f"snippet {query}")
+            ]
+
+        mock_gmail_provider.search_emails.side_effect = search_with_delay
+
+        with patch("vicsia_email_mcp.server.get_provider", return_value=mock_gmail_provider):
+            from vicsia_email_mcp.server import search_emails
+            r1, r2 = await asyncio.gather(
+                search_emails("alpha", 10),
+                search_emails("beta", 10),
+            )
+
+        assert "Result for alpha" in r1
+        assert "Result for beta" in r2
+        assert "Result for beta" not in r1
+        assert "Result for alpha" not in r2
+        assert call_count["n"] == 2

@@ -66,7 +66,7 @@ async def search_emails(query: str, max_results: int = 10) -> str:
     """Search emails by query. Returns subject, sender, date, preview for each result."""
     logger.info("[search_emails] query=%r max_results=%d", query, max_results)
     provider = get_provider()
-    results = await provider.search_emails(query, min(max_results, 20))
+    results = await provider.search_emails(query, min(max_results, 30))
     logger.info("[search_emails] → count=%d", len(results))
 
     if not results:
@@ -76,7 +76,7 @@ async def search_emails(query: str, max_results: int = 10) -> str:
     for i, em in enumerate(results, 1):
         lines.append(f"[{i}] De: {em.sender} | {em.date}")
         lines.append(f"    Objet: {em.subject}")
-        lines.append(f"    Apercu: {em.snippet[:150]}")
+        lines.append(f"    Apercu: {em.snippet[:100]}")
         lines.append(f"    ID: {em.id}")
         lines.append("")
 
@@ -84,20 +84,89 @@ async def search_emails(query: str, max_results: int = 10) -> str:
 
 
 @mcp.tool()
-async def read_email(email_id: str) -> str:
-    """Read the full content of an email by its ID."""
-    logger.info("[read_email] email_id=%r", email_id)
+async def read_email(email_id: str, strip_quotes: bool = False) -> str:
+    """Read the full content of an email by ID.
+
+    DEFAULT (strip_quotes=False): returns the COMPLETE body, including any quoted
+    history from previous messages (the "> On X wrote:" reply chain). Use this
+    when replying to a thread or summarizing a conversation — the quoted history
+    gives context about what was said before.
+
+    With strip_quotes=True: returns ONLY the new content the sender wrote,
+    removing all quoted history (FR/EN/DE Gmail + Outlook patterns). Use this
+    for a clean per-message summary or when you want to reduce tokens.
+    Falls back gracefully — if no quote is detected, body is returned unchanged.
+
+    Args:
+        email_id: ID returned by search_emails or preview_emails.
+        strip_quotes: Default False (full body). Set True for clean content only.
+    """
+    logger.info("[read_email] email_id=%r strip_quotes=%s", email_id, strip_quotes)
     provider = get_provider()
     em = await provider.read_email(email_id)
-    logger.info("[read_email] → subject=%r body_len=%d", em.subject, len(em.body or ""))
+
+    body = em.body or ""
+    if strip_quotes:
+        from .text_utils import strip_quoted_text
+        body = strip_quoted_text(body)
+
+    logger.info("[read_email] → subject=%r body_len=%d stripped=%s", em.subject, len(body), strip_quotes)
 
     return (
         f"De: {em.sender}\n"
         f"Date: {em.date}\n"
         f"Objet: {em.subject}\n"
         f"---\n"
-        f"{em.body}"
+        f"{body}"
     )
+
+
+@mcp.tool()
+async def preview_emails(email_ids: list[str]) -> str:
+    """Get medium-detail previews of specific emails for synthesis or batch analysis.
+
+    USE THIS WHEN:
+    - The user asks to summarize or synthesize multiple emails ("résume mes mails clients")
+    - The user asks for an overview of several emails ("que disent mes emails de la semaine ?")
+    - You need to compare or analyze 2-10 emails together
+    - After search_emails, you identified relevant IDs and want enough content to synthesize
+
+    DO NOT USE FOR:
+    - Finding or listing emails — use search_emails instead
+    - Reading one email in full detail — use read_email instead
+    - Replying to a thread — use read_email (which preserves quoted history)
+
+    Returns ~400 chars of body per email (vs ~100 chars in search_emails, vs full body in read_email).
+    Quoted history is automatically stripped — only the new content of each email is shown.
+    Maximum 10 email IDs per call to keep context manageable.
+
+    Args:
+        email_ids: List of email IDs from search_emails results. Max 10.
+    """
+    from .text_utils import strip_quoted_text
+
+    ids = email_ids[:10]
+    logger.info("[preview_emails] count=%d (requested=%d)", len(ids), len(email_ids))
+    provider = get_provider()
+
+    lines = []
+    for i, email_id in enumerate(ids, 1):
+        try:
+            em = await provider.read_email(email_id)
+            body = strip_quoted_text(em.body or "")
+            preview = body[:400]
+            if len(body) > 400:
+                preview += "…"
+            lines.append(f"[{i}] De: {em.sender} | {em.date}")
+            lines.append(f"    Objet: {em.subject}")
+            lines.append(f"    Contenu: {preview}")
+            lines.append(f"    ID: {em.id}")
+        except Exception as exc:
+            lines.append(f"[{i}] ID {email_id!r}: erreur — {exc}")
+        lines.append("")
+
+    logger.info("[preview_emails] → done %d emails", len(ids))
+    return "\n".join(lines)
 
 
 @mcp.tool()
