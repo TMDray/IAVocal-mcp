@@ -1,6 +1,6 @@
 """Tests for strip_quoted_text() — coverage of FR/EN Gmail + Outlook patterns."""
 
-from vicsia_email_mcp.text_utils import strip_quoted_text
+from vicsia_outlook_mcp.text_utils import strip_quoted_text
 
 
 class TestRFCQuotes:

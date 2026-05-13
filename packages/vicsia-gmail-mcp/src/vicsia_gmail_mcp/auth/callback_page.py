@@ -1,7 +1,6 @@
-"""OAuth callback HTML pages for vicsia-email-mcp.
+"""OAuth callback HTML pages for vicsia-gmail-mcp.
 
 Clean, branded pages shown to the user after OAuth authorization.
-Used by both Gmail and Outlook flows.
 """
 
 SUCCESS_HTML = """<!DOCTYPE html>

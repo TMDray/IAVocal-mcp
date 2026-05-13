@@ -70,7 +70,7 @@ async def get_google_token() -> str | None:
     # Check if token is still valid (with 60s margin)
     if expiry and access_token:
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             exp_dt = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
             if exp_dt.timestamp() > time.time() + 60:

@@ -1,4 +1,4 @@
-"""Entry point for vicsia-email-mcp."""
+"""Entry point for vicsia-outlook-mcp."""
 
 from .server import mcp
 

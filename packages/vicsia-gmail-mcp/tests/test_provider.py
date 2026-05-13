@@ -46,7 +46,7 @@ class TestSearchEmailsScopedToInbox:
 
     @pytest.mark.asyncio
     async def test_search_passes_labelids_inbox(self):
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         # 1 list (vide) — pas de get individuel à mocker
         list_resp = _make_mock_response({"messages": []})
@@ -67,7 +67,7 @@ class TestSearchEmailsScopedToInbox:
     @pytest.mark.asyncio
     async def test_search_handles_empty_mailbox(self):
         """Réponse Gmail sans 'messages' → retourne [] sans crash."""
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         list_resp = _make_mock_response({})  # pas de clé 'messages'
         mock_client = _make_mock_client(get_responses=[list_resp])
@@ -86,7 +86,7 @@ class TestReadEmailDecodesHtml:
 
     @pytest.mark.asyncio
     async def test_html_only_email_decoded_to_text(self):
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         html = "<html><body><p>Bonjour,</p><p>Voici votre <b>facture</b>.</p></body></html>"
         msg_resp = _make_mock_response({
@@ -116,7 +116,7 @@ class TestReadEmailDecodesHtml:
     @pytest.mark.asyncio
     async def test_html_strips_style_and_script_content(self):
         """Newsletters marketing avec <style> intégré ne doivent pas leak le CSS."""
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         html = "<html><head><style>body{color:red}</style></head><body>Hello</body></html>"
         msg_resp = _make_mock_response({
@@ -141,7 +141,7 @@ class TestReadEmailDecodesHtml:
     @pytest.mark.asyncio
     async def test_multipart_alternative_prefers_plain_over_html(self):
         """Si plain ET html existent (multipart/alternative), prendre plain."""
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         msg_resp = _make_mock_response({
             "id": "msg1",
@@ -179,7 +179,7 @@ class TestCreateDraftReplyResolvesThread:
 
     @pytest.mark.asyncio
     async def test_reply_resolves_threadid_and_message_id_header(self):
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         # 1er GET: metadata du message à reply
         meta_resp = _make_mock_response({
@@ -227,7 +227,7 @@ class TestCreateDraftReplyResolvesThread:
     @pytest.mark.asyncio
     async def test_reply_auto_subject_re_prefix_if_missing(self):
         """Si subject vide, on prend l'orig en ajoutant 'Re: ' si pas déjà présent."""
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         meta_resp = _make_mock_response({
             "id": "msg1",
@@ -265,7 +265,7 @@ class TestCreateEventTimezone:
         """start='2026-05-09T14:00:00+02:00' → on garde l'offset (Google le respecte).
         On n'ajoute PAS timeZone (sinon double-conversion).
         """
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         post_resp = _make_mock_response({"id": "ev1"})
         mock_client = _make_mock_client(post_responses=[post_resp])
@@ -286,7 +286,7 @@ class TestCreateEventTimezone:
     @pytest.mark.asyncio
     async def test_no_offset_adds_user_timezone(self, monkeypatch):
         """start sans offset + VICSIA_USER_TZ='Europe/Paris' → timeZone ajouté."""
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         monkeypatch.setenv("VICSIA_USER_TZ", "Europe/Paris")
 
@@ -310,7 +310,7 @@ class TestListEventsHandlesAllDay:
 
     @pytest.mark.asyncio
     async def test_all_day_event_uses_date_field(self):
-        from vicsia_email_mcp.providers.gmail import GmailProvider
+        from vicsia_gmail_mcp.provider import GmailProvider
 
         resp = _make_mock_response({
             "items": [

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from ..auth.ms_token import get_outlook_token
+from .auth.ms_token import get_outlook_token
 from .base import CalendarEvent, DraftResult, Email, EmailProvider, EventResult
 
 logger = logging.getLogger(__name__)
@@ -192,5 +192,3 @@ class OutlookProvider(EmailProvider):
             )
             resp.raise_for_status()
             return EventResult(id=resp.json().get("id", ""))
-
-

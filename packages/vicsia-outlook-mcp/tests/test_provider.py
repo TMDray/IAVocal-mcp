@@ -19,7 +19,7 @@ class TestSearchEmailsScopedToInbox:
 
     @pytest.mark.asyncio
     async def test_search_emails_uses_inbox_folder_endpoint(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"value": []}
@@ -44,7 +44,7 @@ class TestSearchEmailsScopedToInbox:
     @pytest.mark.asyncio
     async def test_search_emails_passes_search_param(self):
         """Verifie que $search est bien passe en query string."""
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"value": []}
@@ -67,7 +67,7 @@ class TestSearchEmailsScopedToInbox:
     @pytest.mark.asyncio
     async def test_search_emails_orderby_when_no_query(self):
         """Sans query reelle (inbox/all/*), on ordonne par date desc."""
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"value": []}
@@ -94,7 +94,7 @@ class TestReadEmailKeepsFullMailboxAccess:
 
     @pytest.mark.asyncio
     async def test_read_email_uses_global_messages_endpoint(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -147,7 +147,7 @@ class TestCreateDraftReplyPreservesQuote:
 
     @pytest.mark.asyncio
     async def test_reply_uses_comment_param_not_patch(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = _make_mock_post_response("draft-reply-id")
         mock_client = _make_mock_client(mock_resp)
@@ -175,7 +175,7 @@ class TestCreateDraftFiltersEmptyRecipients:
 
     @pytest.mark.asyncio
     async def test_empty_recipients_filtered_out(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = _make_mock_post_response("draft-id")
         mock_client = _make_mock_client(mock_resp)
@@ -200,7 +200,7 @@ class TestReadEmailUsesPreferTextBody:
 
     @pytest.mark.asyncio
     async def test_read_email_sends_prefer_text_body_header(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -235,7 +235,7 @@ class TestListEventsDirect:
 
     @pytest.mark.asyncio
     async def test_list_events_uses_calendarview_endpoint(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"value": []}
@@ -259,7 +259,7 @@ class TestListEventsDirect:
     @pytest.mark.asyncio
     async def test_list_events_parses_full_response(self):
         """Vérifie le parsing : title, start, end, location, attendees."""
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
@@ -301,7 +301,7 @@ class TestListEventsDirect:
     @pytest.mark.asyncio
     async def test_list_events_handles_missing_optional_fields(self):
         """Événement sans location ni attendees — ne doit pas crasher."""
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
@@ -335,7 +335,7 @@ class TestCreateDraftNewEmail:
 
     @pytest.mark.asyncio
     async def test_new_draft_with_single_recipient(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = _make_mock_post_response("draft-id")
         mock_client = _make_mock_client(mock_resp)
@@ -357,7 +357,7 @@ class TestCreateDraftNewEmail:
 
     @pytest.mark.asyncio
     async def test_new_draft_with_multiple_recipients(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = _make_mock_post_response("draft-id")
         mock_client = _make_mock_client(mock_resp)
@@ -376,7 +376,7 @@ class TestCreateEventWithDescription:
 
     @pytest.mark.asyncio
     async def test_description_added_as_body(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = _make_mock_post_response("event-id")
         mock_client = _make_mock_client(mock_resp)
@@ -395,7 +395,7 @@ class TestCreateEventWithDescription:
 
     @pytest.mark.asyncio
     async def test_no_description_omits_body(self):
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = _make_mock_post_response("event-id")
         mock_client = _make_mock_client(mock_resp)
@@ -419,7 +419,7 @@ class TestCreateEventTimezoneHandling:
     @pytest.mark.asyncio
     async def test_offset_in_start_converted_to_utc(self):
         """start='2026-05-09T14:00:00+02:00' → dateTime='2026-05-09T12:00:00' tz='UTC'."""
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         mock_resp = _make_mock_post_response("event-id")
         mock_client = _make_mock_client(mock_resp)
@@ -442,7 +442,7 @@ class TestCreateEventTimezoneHandling:
         """start='2026-05-09T14:00:00' (sans offset) + VICSIA_USER_TZ='Europe/Paris'
         → dateTime tel quel + timeZone='Europe/Paris'.
         """
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         monkeypatch.setenv("VICSIA_USER_TZ", "Europe/Paris")
 
@@ -464,7 +464,7 @@ class TestCreateEventTimezoneHandling:
     @pytest.mark.asyncio
     async def test_no_offset_no_env_defaults_utc(self, monkeypatch):
         """Sans offset ET sans VICSIA_USER_TZ → fallback UTC (rétrocompat)."""
-        from vicsia_email_mcp.providers.outlook import OutlookProvider
+        from vicsia_outlook_mcp.provider import OutlookProvider
 
         monkeypatch.delenv("VICSIA_USER_TZ", raising=False)
 

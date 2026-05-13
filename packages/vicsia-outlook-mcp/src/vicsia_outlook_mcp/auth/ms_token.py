@@ -15,6 +15,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from ._crypto_bridge import decrypt
+
 logger = logging.getLogger(__name__)
 
 MS365_CLIENT_ID = os.environ.get("MS365_MCP_CLIENT_ID", "9c24b7f1-b763-4da7-86ba-e180cfbf5940")
@@ -24,16 +26,10 @@ MS365_TOKEN_PATH = Path.home() / ".vicsia" / "ms365_token.json"
 
 
 def _decrypt_if_needed(value: str) -> str:
-    """Decrypt a value if Vicsia's crypto module is available."""
-    if not value or not value.startswith("gAAAAA"):
-        return value  # Plaintext
-    try:
-        from vicsia_email_mcp.auth._crypto_bridge import decrypt
-
-        return decrypt(value)
-    except ImportError:
-        logger.warning("Crypto module not available — cannot decrypt token")
-        return ""
+    """Decrypt a value via _crypto_bridge (no-op if no key configured)."""
+    if not value:
+        return value
+    return decrypt(value)
 
 
 def has_outlook_credentials() -> bool:

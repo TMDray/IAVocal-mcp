@@ -1,60 +1,33 @@
-"""Vicsia Email MCP Server — 5 unified tools for Gmail + Outlook.
+"""Vicsia Gmail MCP Server — 6 tools for Gmail + Google Calendar.
 
 Tools:
   - search_emails: Search emails by query
   - read_email: Read full email content
+  - preview_emails: Batch preview multiple emails (max 10) for synthesis
   - create_draft: Create an email draft (never sends)
   - list_events: List upcoming calendar events (beta)
   - create_event: Create a calendar event (beta)
-
-Provider selection: EMAIL_PROVIDER env var ("gmail" | "outlook") — REQUIRED.
-Pas d'auto-detection : risque de bleed-over si les deux comptes OAuth ont été
-configurés sur la même machine. L'appelant (Vicsia) injecte EMAIL_PROVIDER
-explicitement par MCP pour garantir l'isolement Gmail/Outlook.
 """
 
 import logging
-import os
 
 from mcp.server.fastmcp import FastMCP
 
-from .providers.base import EmailProvider
+from .provider import GmailProvider
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("vicsia-email")
+mcp = FastMCP("vicsia-gmail")
 
-_provider: EmailProvider | None = None
+_provider: GmailProvider | None = None
 
 
-def get_provider() -> EmailProvider:
-    """Get or create the email provider (lazy singleton).
-
-    EMAIL_PROVIDER doit être défini explicitement (gmail|outlook).
-    Si absent ou invalide → RuntimeError immédiate.
-    """
+def _get_provider() -> GmailProvider:
+    """Lazy singleton."""
     global _provider
-    if _provider is not None:
-        return _provider
-
-    provider_name = os.environ.get("EMAIL_PROVIDER", "").lower()
-
-    if provider_name == "gmail":
-        from .providers.gmail import GmailProvider
-
+    if _provider is None:
         _provider = GmailProvider()
         logger.info("Email provider: Gmail")
-    elif provider_name == "outlook":
-        from .providers.outlook import OutlookProvider
-
-        _provider = OutlookProvider()
-        logger.info("Email provider: Outlook")
-    else:
-        raise RuntimeError(
-            f"EMAIL_PROVIDER must be 'gmail' or 'outlook' (got: {provider_name!r}). "
-            "Set the env var explicitly — no auto-detection."
-        )
-
     return _provider
 
 
@@ -70,8 +43,7 @@ async def search_emails(query: str, max_results: int = 10) -> str:
     To read/summarize multiple emails at once, prefer preview_emails([id1, id2, ...]).
     """
     logger.info("[search_emails] query=%r max_results=%d", query, max_results)
-    provider = get_provider()
-    results = await provider.search_emails(query, min(max_results, 30))
+    results = await _get_provider().search_emails(query, min(max_results, 30))
     logger.info("[search_emails] → count=%d", len(results))
 
     if not results:
@@ -104,8 +76,7 @@ async def read_email(email_id: str, strip_quotes: bool = False) -> str:
                       True = new content only, quoted history stripped.
     """
     logger.info("[read_email] email_id=%r strip_quotes=%s", email_id, strip_quotes)
-    provider = get_provider()
-    em = await provider.read_email(email_id)
+    em = await _get_provider().read_email(email_id)
 
     body = em.body or ""
     if strip_quotes:
@@ -149,7 +120,7 @@ async def preview_emails(email_ids: list[str]) -> str:
 
     ids = email_ids[:10]
     logger.info("[preview_emails] count=%d (requested=%d)", len(ids), len(email_ids))
-    provider = get_provider()
+    provider = _get_provider()
 
     lines = []
     for i, email_id in enumerate(ids, 1):
@@ -178,8 +149,7 @@ async def create_draft(to: str = "", subject: str = "", body: str = "", reply_to
         "[create_draft] to=%r subject_len=%d body_len=%d reply_to=%r",
         to, len(subject), len(body), reply_to,
     )
-    provider = get_provider()
-    result = await provider.create_draft(to, subject, body, reply_to)
+    result = await _get_provider().create_draft(to, subject, body, reply_to)
     logger.info("[create_draft] → id=%r", result.id)
     return f"Draft created (id: {result.id})"
 
@@ -191,8 +161,7 @@ async def create_draft(to: str = "", subject: str = "", body: str = "", reply_to
 async def list_events(days: int = 7) -> str:
     """List upcoming calendar events for the next N days. Beta feature."""
     logger.info("[list_events] days=%d", days)
-    provider = get_provider()
-    events = await provider.list_events(min(days, 30))
+    events = await _get_provider().list_events(min(days, 30))
     logger.info("[list_events] → count=%d", len(events))
 
     if not events:
@@ -222,7 +191,6 @@ async def create_event(title: str, start: str, end: str, description: str = "") 
         description: Optional event description
     """
     logger.info("[create_event] title=%r start=%r end=%r", title, start, end)
-    provider = get_provider()
-    result = await provider.create_event(title, start, end, description)
+    result = await _get_provider().create_event(title, start, end, description)
     logger.info("[create_event] → id=%r", result.id)
     return f"Event created (id: {result.id})"

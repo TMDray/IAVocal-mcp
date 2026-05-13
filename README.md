@@ -1,71 +1,39 @@
-# Vicsia Email MCP
+# IAVocal-mcp — MCP servers monorepo for Vicsia
 
-Minimal MCP server for email and calendar — Gmail + Outlook, 5 unified tools.
+Monorepo hosting MCP servers used by [Vicsia](https://vicsia.app).
 
-## Why
+## Packages
 
-Community MCP servers expose 100-200+ tools. An AI using a small model gets confused with too many options. This MCP exposes **exactly 5 tools** with unified names that work with both Gmail and Outlook.
+| Package | Description | Status |
+|---------|-------------|--------|
+| [`vicsia-gmail-mcp`](packages/vicsia-gmail-mcp/) | Gmail + Google Calendar MCP server | active |
+| [`vicsia-outlook-mcp`](packages/vicsia-outlook-mcp/) | Outlook + Outlook Calendar MCP server | active |
+| [`vicsia-email-mcp`](packages/vicsia-email-mcp/) | DEPRECATED — split into the two above | v0.3.0 = stub |
 
-```
-Community MCP:    search_gmail_messages / list-mail-messages    → 2 different names
-Vicsia Email MCP: search_emails                                → 1 name, works for both
-```
+## Why split?
 
-## Tools
+Previously, Gmail and Outlook were bundled in a single package with an `EMAIL_PROVIDER` env switch. The split brings:
 
-| Tool | Description | Params |
-|------|-------------|--------|
-| `search_emails` | Search emails by query | `query` (str), `max_results` (int, default 10) |
-| `read_email` | Read full email content | `email_id` (str) |
-| `create_draft` | Create a draft (never sends) | `to`, `subject`, `body`, `reply_to` (optional) |
-| `list_events` | List upcoming calendar events (beta) | `days` (int, default 7) |
-| `create_event` | Create a calendar event (beta) | `title`, `start`, `end`, `description` |
-
-## Provider detection
-
-The MCP auto-detects which provider to use:
-
-1. `EMAIL_PROVIDER` env var (`gmail` or `outlook`)
-2. Google credentials present (`~/.google_workspace_mcp/credentials/`) → Gmail
-3. Outlook token present (`~/.vicsia/ms365_token.json`) → Outlook
-
-## Usage with Vicsia
-
-Authentication is handled by Vicsia's Connexions page. The MCP reads tokens from the same locations — no double login needed.
-
-## Usage standalone
-
-```json
-{
-  "mcpServers": {
-    "vicsia-email": {
-      "command": "uvx",
-      "args": ["vicsia-email-mcp"],
-      "env": {
-        "EMAIL_PROVIDER": "gmail",
-        "GOOGLE_OAUTH_CLIENT_ID": "your-client-id",
-        "GOOGLE_OAUTH_CLIENT_SECRET": "your-client-secret"
-      }
-    }
-  }
-}
-```
+- Independent dependencies (Gmail-only user doesn't ship Outlook code).
+- Independent release cycles (a bug in one provider doesn't block the other).
+- Cleaner architecture — one MCP = one PyPI package.
 
 ## Development
 
 ```bash
-cd IAVocal-mcp
-pip install -e ".[dev]"
-pytest
+# Sync workspace (picks up all packages)
+uv sync
+
+# Build a package
+cd packages/vicsia-gmail-mcp && uv build
+
+# Test a package
+cd packages/vicsia-gmail-mcp && uv run pytest
 ```
 
-## Upstream tracking
+## Convention
 
-Check if upstream MCPs we based our implementation on have changed:
-
-```bash
-python scripts/check_upstream.py
-```
+See the `/mcp-development` skill in the Vicsia repo for design rules (1 MCP = 1 package, batch tools, cross-platform gotchas, OAuth wiring, etc.).
 
 ## License
 

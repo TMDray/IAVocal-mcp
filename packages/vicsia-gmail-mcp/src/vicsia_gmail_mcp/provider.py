@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from ..auth.google_oauth import get_google_token
+from .auth.google_oauth import get_google_token
 from .base import CalendarEvent, DraftResult, Email, EmailProvider, EventResult
 
 logger = logging.getLogger(__name__)

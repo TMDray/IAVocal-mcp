@@ -1,4 +1,4 @@
-"""Google OAuth callback server for vicsia-email-mcp.
+"""Google OAuth callback server for vicsia-gmail-mcp.
 
 Handles the OAuth2 PKCE flow:
 1. User clicks "Connect" → opens Google consent URL in browser
@@ -7,7 +7,7 @@ Handles the OAuth2 PKCE flow:
 4. Shows a branded Vicsia success page
 
 Usage:
-    from vicsia_email_mcp.auth.google_callback import start_google_auth
+    from vicsia_gmail_mcp.auth.google_callback import start_google_auth
     start_google_auth()  # Opens browser, waits for callback
 """
 

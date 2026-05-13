@@ -18,7 +18,7 @@ def _reload_bridge(monkeypatch, key: str | None):
         monkeypatch.delenv("VICSIA_FERNET_KEY", raising=False)
     else:
         monkeypatch.setenv("VICSIA_FERNET_KEY", key)
-    import vicsia_email_mcp.auth._crypto_bridge as bridge
+    import vicsia_gmail_mcp.auth._crypto_bridge as bridge
 
     return importlib.reload(bridge)
 

@@ -1,7 +1,7 @@
 """Bridge to Vicsia's crypto module for token decryption.
 
 Vicsia stocke les tokens OAuth chiffrés via Fernet (clé dérivée du machine ID).
-Le subprocess uvx vicsia-email-mcp ne peut pas importer src.core.crypto :
+Le subprocess uvx vicsia-gmail-mcp ne peut pas importer src.core.crypto :
 Vicsia injecte donc VICSIA_FERNET_KEY dans l'env du subprocess.
 
 Sans VICSIA_FERNET_KEY (mode standalone hors Vicsia), fallback no-op : on suppose
