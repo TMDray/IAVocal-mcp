@@ -1,6 +1,6 @@
 [project]
 name = "vicsia-email-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Minimal email & calendar MCP server — Gmail + Outlook, 6 unified tools"
 license = "MIT"
 requires-python = ">=3.11"

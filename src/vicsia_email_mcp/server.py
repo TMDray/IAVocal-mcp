@@ -63,7 +63,12 @@ def get_provider() -> EmailProvider:
 
 @mcp.tool()
 async def search_emails(query: str, max_results: int = 10) -> str:
-    """Search emails by query. Returns subject, sender, date, preview for each result."""
+    """Search emails by query. Returns ID, sender, date, subject and a short preview.
+
+    IMPORTANT: To read an email's full content, use read_email(email_id=<ID>) where
+    <ID> is the value on the "ID:" line below — NOT the result number.
+    To read/summarize multiple emails at once, prefer preview_emails([id1, id2, ...]).
+    """
     logger.info("[search_emails] query=%r max_results=%d", query, max_results)
     provider = get_provider()
     results = await provider.search_emails(query, min(max_results, 30))
@@ -73,11 +78,11 @@ async def search_emails(query: str, max_results: int = 10) -> str:
         return "No emails found."
 
     lines = []
-    for i, em in enumerate(results, 1):
-        lines.append(f"[{i}] De: {em.sender} | {em.date}")
-        lines.append(f"    Objet: {em.subject}")
-        lines.append(f"    Apercu: {em.snippet[:100]}")
-        lines.append(f"    ID: {em.id}")
+    for em in results:
+        lines.append(f"ID: {em.id}")
+        lines.append(f"De: {em.sender} | {em.date}")
+        lines.append(f"Objet: {em.subject}")
+        lines.append(f"Apercu: {em.snippet[:100]}")
         lines.append("")
 
     return "\n".join(lines)
@@ -85,21 +90,18 @@ async def search_emails(query: str, max_results: int = 10) -> str:
 
 @mcp.tool()
 async def read_email(email_id: str, strip_quotes: bool = False) -> str:
-    """Read the full content of an email by ID.
+    """Read the FULL content of ONE email by its ID.
 
-    DEFAULT (strip_quotes=False): returns the COMPLETE body, including any quoted
-    history from previous messages (the "> On X wrote:" reply chain). Use this
-    when replying to a thread or summarizing a conversation — the quoted history
-    gives context about what was said before.
+    USE THIS for: reading a single email in full detail, replying to a thread
+    (strip_quotes=False preserves the quoted history for context).
 
-    With strip_quotes=True: returns ONLY the new content the sender wrote,
-    removing all quoted history (FR/EN/DE Gmail + Outlook patterns). Use this
-    for a clean per-message summary or when you want to reduce tokens.
-    Falls back gracefully — if no quote is detected, body is returned unchanged.
+    DO NOT USE THIS to read multiple emails one by one — use preview_emails([id1, id2, ...])
+    instead, which fetches N emails in a single call and is far more efficient.
 
     Args:
-        email_id: ID returned by search_emails or preview_emails.
-        strip_quotes: Default False (full body). Set True for clean content only.
+        email_id: The ID value from search_emails results (the "ID:" line, not the result number).
+        strip_quotes: False (default) = full body including reply chain.
+                      True = new content only, quoted history stripped.
     """
     logger.info("[read_email] email_id=%r strip_quotes=%s", email_id, strip_quotes)
     provider = get_provider()
