@@ -3,7 +3,7 @@
 Tools:
   - search_emails: Search emails by query
   - read_email: Read full email content
-  - preview_emails: Batch preview multiple emails (max 10) for synthesis
+  - preview_emails: Batch preview multiple emails (max 5) for synthesis
   - create_draft: Create an email draft (never sends)
   - list_events: List upcoming calendar events (beta)
   - create_event: Create a calendar event (beta)
@@ -35,15 +35,32 @@ def _get_provider() -> GmailProvider:
 
 
 @mcp.tool()
-async def search_emails(query: str, max_results: int = 10) -> str:
-    """Search emails by query. Returns ID, sender, date, subject and a short preview.
+async def search_emails(query: str, max_results: int = 3, exclude_promotions: bool = True) -> str:
+    """Search emails by query. Returns ID, sender, date, subject and a short snippet.
 
-    IMPORTANT: To read an email's full content, use read_email(email_id=<ID>) where
-    <ID> is the value on the "ID:" line below — NOT the result number.
-    To read/summarize multiple emails at once, prefer preview_emails([id1, id2, ...]).
+    TOKEN BUDGET: default max_results=3 (targeted search). Use max_results=5 only for broad overviews.
+    Hard cap at 5 — never exceeds this regardless of what you pass.
+
+    DATE FILTERING: use Gmail query syntax to limit scope — this is the primary way to avoid
+    loading old/irrelevant emails:
+      - newer_than:3d   → last 3 days
+      - newer_than:1w   → last week
+      - after:2026/05/01 → since May 1st
+      - before:2026/05/01 → before May 1st
+    Examples: "is:unread newer_than:2d", "from:jean newer_than:1w", "subject:facture after:2026/04/01"
+
+    IMPORTANT: After getting results, use preview_emails([id1, id2, ...]) to get content.
+    Do NOT use read_email in a loop — use preview_emails for batch reading.
+
+    Args:
+        query: Gmail search query
+        max_results: Max emails (default 3 for targeted, 5 for overview). Hard cap: 5.
+        exclude_promotions: Auto-exclude newsletters/ads (default True).
     """
+    if exclude_promotions and "-category:promotions" not in query and "-label:category-promotions" not in query:
+        query = f"{query} -category:promotions"
     logger.info("[search_emails] query=%r max_results=%d", query, max_results)
-    results = await _get_provider().search_emails(query, min(max_results, 30))
+    results = await _get_provider().search_emails(query, min(max_results, 5))
     logger.info("[search_emails] → count=%d", len(results))
 
     if not results:
@@ -54,7 +71,7 @@ async def search_emails(query: str, max_results: int = 10) -> str:
         lines.append(f"ID: {em.id}")
         lines.append(f"De: {em.sender} | {em.date}")
         lines.append(f"Objet: {em.subject}")
-        lines.append(f"Apercu: {em.snippet[:100]}")
+        lines.append(f"Apercu: {em.snippet[:150]}")
         lines.append("")
 
     return "\n".join(lines)
@@ -64,16 +81,14 @@ async def search_emails(query: str, max_results: int = 10) -> str:
 async def read_email(email_id: str, strip_quotes: bool = False) -> str:
     """Read the FULL content of ONE email by its ID.
 
-    USE THIS for: reading a single email in full detail, replying to a thread
-    (strip_quotes=False preserves the quoted history for context).
+    USE THIS for: reading a single email in full detail, replying to a specific thread
+    (strip_quotes=False preserves the quoted history for reply context).
 
-    DO NOT USE THIS to read multiple emails one by one — use preview_emails([id1, id2, ...])
-    instead, which fetches N emails in a single call and is far more efficient.
+    DO NOT USE THIS in a loop — use preview_emails([id1, id2, ...]) for multiple emails.
 
     Args:
         email_id: The ID value from search_emails results (the "ID:" line, not the result number).
-        strip_quotes: False (default) = full body including reply chain.
-                      True = new content only, quoted history stripped.
+        strip_quotes: False (default) = full body with reply chain. True = new content only.
     """
     logger.info("[read_email] email_id=%r strip_quotes=%s", email_id, strip_quotes)
     em = await _get_provider().read_email(email_id)
@@ -96,29 +111,34 @@ async def read_email(email_id: str, strip_quotes: bool = False) -> str:
 
 @mcp.tool()
 async def preview_emails(email_ids: list[str]) -> str:
-    """Get medium-detail previews of specific emails for synthesis or batch analysis.
+    """Get compact previews of recent emails for synthesis or overview.
 
     USE THIS WHEN:
     - The user asks to summarize or synthesize multiple emails ("résume mes mails clients")
-    - The user asks for an overview of several emails ("que disent mes emails de la semaine ?")
-    - You need to compare or analyze 2-10 emails together
-    - After search_emails, you identified relevant IDs and want enough content to synthesize
+    - The user wants an overview of recent emails ("que disent mes emails de la semaine ?")
+    - After search_emails, you need just enough content to write a synthesis
 
     DO NOT USE FOR:
-    - Finding or listing emails — use search_emails instead
-    - Reading one email in full detail — use read_email instead
-    - Replying to a thread — use read_email (which preserves quoted history)
+    - Finding emails — use search_emails instead
+    - Replying to a thread — use read_email instead (preserves reply chain)
+    - Old emails or newsletters — search_emails already filters promotions
 
-    Returns ~400 chars of body per email (vs ~100 chars in search_emails, vs full body in read_email).
-    Quoted history is automatically stripped — only the new content of each email is shown.
-    Maximum 10 email IDs per call to keep context manageable.
+    ⚠️ COÛTEUX: chaque appel ouvre N emails via l'API — utiliser avec parcimonie.
+    Pour un résumé général ("quels mails ai-je reçu ?"), les snippets de search_emails suffisent.
+    N'appelle preview_emails que si tu as besoin du contenu détaillé d'emails spécifiques.
+
+    Max 4 email IDs. Only pass IDs from RECENT emails (from current search results).
+    Returns ~150 chars of body per email — enough for synthesis, minimal token cost.
+    Quoted history is automatically stripped.
+
+    After calling preview_emails, you have enough data → declare done=true immediately.
 
     Args:
-        email_ids: List of email IDs from search_emails results. Max 10.
+        email_ids: List of email IDs from search_emails results. Max 4.
     """
     from .text_utils import strip_quoted_text
 
-    ids = email_ids[:10]
+    ids = email_ids[:4]
     logger.info("[preview_emails] count=%d (requested=%d)", len(ids), len(email_ids))
     provider = _get_provider()
 
@@ -127,8 +147,8 @@ async def preview_emails(email_ids: list[str]) -> str:
         try:
             em = await provider.read_email(email_id)
             body = strip_quoted_text(em.body or "")
-            preview = body[:400]
-            if len(body) > 400:
+            preview = body[:150]
+            if len(body) > 150:
                 preview += "…"
             lines.append(f"[{i}] De: {em.sender} | {em.date}")
             lines.append(f"    Objet: {em.subject}")
@@ -144,14 +164,24 @@ async def preview_emails(email_ids: list[str]) -> str:
 
 @mcp.tool()
 async def create_draft(to: str = "", subject: str = "", body: str = "", reply_to: str = "") -> str:
-    """Create an email draft. Does NOT send it. Use reply_to with an email ID to create a reply draft."""
+    """Create an email draft. Does NOT send it.
+
+    CONFIRMATION: Returns "Draft created (id: <draft_id>)" on success. This confirms the draft
+    exists in Gmail — no need to search or verify afterwards. Declare done=true immediately.
+
+    Args:
+        to: Recipient email. Use "" or "À compléter" if unknown — user will fill it in Gmail.
+        subject: Email subject.
+        body: Email body (plain text).
+        reply_to: Email ID to reply to (creates a threaded reply draft).
+    """
     logger.info(
         "[create_draft] to=%r subject_len=%d body_len=%d reply_to=%r",
         to, len(subject), len(body), reply_to,
     )
     result = await _get_provider().create_draft(to, subject, body, reply_to)
     logger.info("[create_draft] → id=%r", result.id)
-    return f"Draft created (id: {result.id})"
+    return f"Draft created (id: {result.id}) — brouillon enregistré dans Gmail, aucune vérification nécessaire."
 
 
 # ==================== Calendar Tools (beta) ====================
@@ -183,6 +213,8 @@ async def list_events(days: int = 7) -> str:
 @mcp.tool()
 async def create_event(title: str, start: str, end: str, description: str = "") -> str:
     """Create a calendar event. Does not send invitations. Beta feature.
+
+    CONFIRMATION: Returns "Event created (id: <event_id>)" on success — no verification needed.
 
     Args:
         title: Event title
