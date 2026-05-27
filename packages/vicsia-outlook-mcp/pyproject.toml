@@ -1,6 +1,6 @@
 [project]
 name = "vicsia-outlook-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "Outlook MCP server for Vicsia — 6 tools for search, read, draft, calendar"
 license = "MIT"
 requires-python = ">=3.11"
