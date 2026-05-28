@@ -35,11 +35,10 @@ def _get_provider() -> GmailProvider:
 
 
 @mcp.tool()
-async def search_emails(query: str, max_results: int = 3, focus_only: bool = True) -> str:
+async def search_emails(query: str, max_results: int = 5, focus_only: bool = True) -> str:
     """Search emails by query. Returns ID, sender, date, subject and a short snippet.
 
-    TOKEN BUDGET: default max_results=3 (targeted search). Use max_results=5 only for broad overviews.
-    Hard cap at 5 — never exceeds this regardless of what you pass.
+    TOKEN BUDGET: default max_results=5 (covers most use cases). Hard cap at 5 — never exceeds.
 
     INBOX SCOPE (focus_only):
       - True (default): only "Primary" tab — excludes Promotions, Social, Updates, Forums.
@@ -60,7 +59,7 @@ async def search_emails(query: str, max_results: int = 3, focus_only: bool = Tru
 
     Args:
         query: Gmail search query
-        max_results: Max emails (default 3 for targeted, 5 for overview). Hard cap: 5.
+        max_results: Max emails (default 5). Hard cap: 5.
         focus_only: Restrict to "Primary" Gmail tab (default True). Excludes Promotions/Social/etc.
     """
     logger.info("[search_emails] query=%r max_results=%d focus_only=%s", query, max_results, focus_only)
@@ -114,7 +113,7 @@ async def read_email(email_id: str, strip_quotes: bool = False) -> str:
 
 
 @mcp.tool()
-async def preview_emails(email_ids: list[str]) -> str:
+async def preview_emails(email_ids: list[str], focus_only: bool = True) -> str:
     """Get compact previews of recent emails for synthesis or overview.
 
     USE THIS WHEN:
@@ -127,34 +126,46 @@ async def preview_emails(email_ids: list[str]) -> str:
     - Replying to a thread — use read_email instead (preserves reply chain)
     - Old emails or newsletters — search_emails already filters promotions
 
-    ⚠️ COÛTEUX: chaque appel ouvre N emails via l'API — utiliser avec parcimonie.
-    Pour un résumé général ("quels mails ai-je reçu ?"), les snippets de search_emails suffisent.
-    N'appelle preview_emails que si tu as besoin du contenu détaillé d'emails spécifiques.
+    INBOX SCOPE (focus_only):
+    - True (default): skip emails NOT in "Primary" tab (CATEGORY_PERSONAL). If you pass IDs
+      that turn out to be newsletters/promos, they are excluded with a note. This guarantees
+      coherence with search_emails(focus_only=True).
+    - False: preview all emails regardless of category. Use only when user explicitly wants
+      newsletters/promotions previewed.
 
-    Max 4 email IDs. Only pass IDs from RECENT emails (from current search results).
+    Max 8 email IDs. Only pass IDs from RECENT emails (from current search results).
     Returns ~150 chars of body per email — enough for synthesis, minimal token cost.
     Quoted history is automatically stripped.
 
     After calling preview_emails, you have enough data → declare done=true immediately.
 
     Args:
-        email_ids: List of email IDs from search_emails results. Max 4.
+        email_ids: List of email IDs from search_emails results. Max 8.
+        focus_only: Restrict to "Primary" Gmail tab (default True). Non-Personal emails are skipped.
     """
     from .text_utils import strip_quoted_text
 
-    ids = email_ids[:4]
-    logger.info("[preview_emails] count=%d (requested=%d)", len(ids), len(email_ids))
+    ids = email_ids[:8]
+    logger.info("[preview_emails] count=%d (requested=%d) focus_only=%s", len(ids), len(email_ids), focus_only)
     provider = _get_provider()
 
     lines = []
+    shown_count = 0
+    skipped_count = 0
     for i, email_id in enumerate(ids, 1):
         try:
             em = await provider.read_email(email_id)
+            # focus_only : skip si le mail n'est pas dans la catégorie Principal
+            if focus_only and "CATEGORY_PERSONAL" not in em.labels:
+                skipped_count += 1
+                logger.info("[preview_emails] skip %s (labels=%s, not in Personal)", email_id, em.labels)
+                continue
             body = strip_quoted_text(em.body or "")
             preview = body[:150]
             if len(body) > 150:
                 preview += "…"
-            lines.append(f"[{i}] De: {em.sender} | {em.date}")
+            shown_count += 1
+            lines.append(f"[{shown_count}] De: {em.sender} | {em.date}")
             lines.append(f"    Objet: {em.subject}")
             lines.append(f"    Contenu: {preview}")
             lines.append(f"    ID: {em.id}")
@@ -162,7 +173,9 @@ async def preview_emails(email_ids: list[str]) -> str:
             lines.append(f"[{i}] ID {email_id!r}: erreur — {exc}")
         lines.append("")
 
-    logger.info("[preview_emails] → done %d emails", len(ids))
+    if focus_only and skipped_count > 0:
+        lines.append(f"Note : {skipped_count} mail(s) ignoré(s) (catégorie non-Principale).")
+    logger.info("[preview_emails] → done shown=%d skipped=%d", shown_count, skipped_count)
     return "\n".join(lines)
 
 
@@ -170,8 +183,10 @@ async def preview_emails(email_ids: list[str]) -> str:
 async def create_draft(to: str = "", subject: str = "", body: str = "", reply_to: str = "") -> str:
     """Create an email draft. Does NOT send it.
 
-    CONFIRMATION: Returns "Draft created (id: <draft_id>)" on success. This confirms the draft
-    exists in Gmail — no need to search or verify afterwards. Declare done=true immediately.
+    RETURN FORMAT: Always returns the full draft content (to, subject, body) on both success
+    AND failure. This guarantees the user always sees what was written in the capsule — even
+    if the draft creation fails (API down, auth expired), they have the content to copy-paste
+    or retry. Declare done=true immediately after this call.
 
     Args:
         to: Recipient email. Use "" or "À compléter" if unknown — user will fill it in Gmail.
@@ -183,9 +198,18 @@ async def create_draft(to: str = "", subject: str = "", body: str = "", reply_to
         "[create_draft] to=%r subject_len=%d body_len=%d reply_to=%r",
         to, len(subject), len(body), reply_to,
     )
-    result = await _get_provider().create_draft(to, subject, body, reply_to)
-    logger.info("[create_draft] → id=%r", result.id)
-    return f"Draft created (id: {result.id}) — brouillon enregistré dans Gmail, aucune vérification nécessaire."
+    content_block = (
+        f"À : {to or 'À compléter'}\n"
+        f"Objet : {subject or '(sans objet)'}\n\n"
+        f"{body}"
+    )
+    try:
+        result = await _get_provider().create_draft(to, subject, body, reply_to)
+        logger.info("[create_draft] → id=%r", result.id)
+        return f"Brouillon créé (id: {result.id}).\n\n{content_block}"
+    except Exception as exc:
+        logger.exception("[create_draft] échec : %s", exc)
+        return f"ÉCHEC : {exc}\n\nContenu prévu :\n{content_block}"
 
 
 # ==================== Calendar Tools (beta) ====================

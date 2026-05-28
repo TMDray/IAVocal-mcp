@@ -231,6 +231,7 @@ def _parse_email_metadata(msg_data: dict) -> Email:
         sender=_get_header(msg_data, "From"),
         date=_get_header(msg_data, "Date"),
         snippet=msg_data.get("snippet", ""),
+        labels=list(msg_data.get("labelIds", [])),
     )
 
 

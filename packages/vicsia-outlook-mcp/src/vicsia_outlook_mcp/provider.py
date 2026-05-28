@@ -112,13 +112,14 @@ class OutlookProvider(EmailProvider):
             req_headers = {**headers, "Prefer": 'outlook.body-content-type="text"'}
             resp = await client.get(
                 f"{GRAPH_API}/me/messages/{email_id}",
-                params={"$select": "id,subject,from,receivedDateTime,body,bodyPreview"},
+                params={"$select": "id,subject,from,receivedDateTime,body,bodyPreview,inferenceClassification"},
                 headers=req_headers,
             )
             resp.raise_for_status()
             msg = resp.json()
 
             sender = msg.get("from", {}).get("emailAddress", {})
+            classification = msg.get("inferenceClassification", "focused")
             return Email(
                 id=msg.get("id", ""),
                 subject=msg.get("subject", ""),
@@ -126,6 +127,7 @@ class OutlookProvider(EmailProvider):
                 date=msg.get("receivedDateTime", ""),
                 snippet=msg.get("bodyPreview", ""),
                 body=msg.get("body", {}).get("content", ""),
+                labels=[classification],
             )
 
     async def create_draft(self, to: str, subject: str, body: str, reply_to: str = "") -> DraftResult:

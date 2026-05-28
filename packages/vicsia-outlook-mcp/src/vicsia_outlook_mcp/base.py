@@ -14,6 +14,10 @@ class Email:
     date: str
     snippet: str
     body: str = ""
+    # Labels/classification du mail. Outlook : inferenceClassification ("focused" ou "other")
+    # wrappé dans une liste pour cohérence avec Gmail (qui a plusieurs labelIds).
+    # Permet à preview_emails de filtrer post-fetch (focus_only=True ignore non-focused).
+    labels: list[str] = field(default_factory=list)
 
 
 @dataclass
