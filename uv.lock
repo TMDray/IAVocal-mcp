@@ -686,7 +686,7 @@ source = { editable = "packages/vicsia-email-mcp" }
 
 [[package]]
 name = "vicsia-gmail-mcp"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "packages/vicsia-gmail-mcp" }
 dependencies = [
     { name = "cryptography" },
@@ -703,7 +703,7 @@ requires-dist = [
 
 [[package]]
 name = "vicsia-outlook-mcp"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "packages/vicsia-outlook-mcp" }
 dependencies = [
     { name = "cryptography" },

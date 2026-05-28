@@ -39,16 +39,19 @@ def _b64url(s: str) -> str:
 
 
 class TestSearchEmailsScopedToInbox:
-    """search_emails doit passer labelIds=INBOX. Sans ça, /messages couvre TOUTES
+    """search_emails doit passer labelIds avec INBOX. Sans ça, /messages couvre TOUTES
     les boîtes (Sent, Drafts, Spam, Trash) et les drafts maison remontent.
     Bug analogue à Outlook 0.1.4.
+
+    focus_only=True (défaut) ajoute CATEGORY_PERSONAL pour restreindre à l'onglet "Principal"
+    Gmail (exclut Promotions, Social, Updates, Forums).
     """
 
     @pytest.mark.asyncio
-    async def test_search_passes_labelids_inbox(self):
+    async def test_search_default_includes_inbox_and_category_personal(self):
+        """Par défaut (focus_only=True), labelIds = [INBOX, CATEGORY_PERSONAL]."""
         from vicsia_gmail_mcp.provider import GmailProvider
 
-        # 1 list (vide) — pas de get individuel à mocker
         list_resp = _make_mock_response({"messages": []})
         mock_client = _make_mock_client(get_responses=[list_resp])
 
@@ -56,12 +59,34 @@ class TestSearchEmailsScopedToInbox:
         with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
             await provider.search_emails("test", 5)
 
-        # Premier appel GET = list — vérifier params
         first_call = mock_client.get.call_args_list[0]
         params = first_call.kwargs["params"]
-        assert params.get("labelIds") == "INBOX", (
-            "search_emails doit scoper INBOX. Sans labelIds, la recherche couvre "
-            f"toute la mailbox. Reçu: {params}"
+        label_ids = params.get("labelIds")
+        assert isinstance(label_ids, list), f"labelIds doit être une liste. Reçu: {label_ids}"
+        assert "INBOX" in label_ids, "search_emails doit scoper INBOX"
+        assert "CATEGORY_PERSONAL" in label_ids, (
+            "focus_only=True (défaut) doit ajouter CATEGORY_PERSONAL pour restreindre "
+            f"à l'onglet Principal. Reçu: {label_ids}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_focus_only_false_omits_category_personal(self):
+        """focus_only=False : pas de filtre CATEGORY_PERSONAL (toutes catégories incluses)."""
+        from vicsia_gmail_mcp.provider import GmailProvider
+
+        list_resp = _make_mock_response({"messages": []})
+        mock_client = _make_mock_client(get_responses=[list_resp])
+
+        provider = GmailProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.search_emails("test", 5, focus_only=False)
+
+        first_call = mock_client.get.call_args_list[0]
+        label_ids = first_call.kwargs["params"].get("labelIds")
+        assert isinstance(label_ids, list)
+        assert "INBOX" in label_ids
+        assert "CATEGORY_PERSONAL" not in label_ids, (
+            "focus_only=False ne doit PAS ajouter CATEGORY_PERSONAL"
         )
 
     @pytest.mark.asyncio

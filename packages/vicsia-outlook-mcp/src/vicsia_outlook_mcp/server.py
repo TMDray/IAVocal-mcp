@@ -35,11 +35,17 @@ def _get_provider() -> OutlookProvider:
 
 
 @mcp.tool()
-async def search_emails(query: str, max_results: int = 3) -> str:
+async def search_emails(query: str, max_results: int = 3, focus_only: bool = True) -> str:
     """Search emails by query. Returns ID, sender, date, subject and a short snippet.
 
     TOKEN BUDGET: default max_results=3 (targeted search). Use max_results=5 only for broad overviews.
     Hard cap at 5 — never exceeds this regardless of what you pass.
+
+    INBOX SCOPE (focus_only):
+      - True (default): only "Focused" inbox (Outlook's auto-prioritized mails — excludes
+        newsletters/notifications classified as "Other"). This is what you want 99% of the time.
+      - False: include all mails (Focused + Other). Use only if user explicitly asks for
+        newsletters/promotions ("show me my marketing emails").
 
     DATE FILTERING: add date constraints to the query to limit results to recent emails:
       - "received>=2026-05-20" → since May 20th
@@ -53,9 +59,10 @@ async def search_emails(query: str, max_results: int = 3) -> str:
     Args:
         query: Outlook search query (KQL syntax)
         max_results: Max emails (default 3 for targeted, 5 for overview). Hard cap: 5.
+        focus_only: Restrict to "Focused" inbox (default True). Excludes "Other" classified mails.
     """
-    logger.info("[search_emails] query=%r max_results=%d", query, max_results)
-    results = await _get_provider().search_emails(query, min(max_results, 5))
+    logger.info("[search_emails] query=%r max_results=%d focus_only=%s", query, max_results, focus_only)
+    results = await _get_provider().search_emails(query, min(max_results, 5), focus_only=focus_only)
     logger.info("[search_emails] → count=%d", len(results))
 
     if not results:

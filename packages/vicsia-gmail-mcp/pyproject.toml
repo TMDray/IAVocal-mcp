@@ -1,6 +1,6 @@
 [project]
 name = "vicsia-gmail-mcp"
-version = "0.1.2"
+version = "0.1.3"
 description = "Gmail MCP server for Vicsia — 6 tools for search, read, draft, calendar"
 license = "MIT"
 requires-python = ">=3.11"

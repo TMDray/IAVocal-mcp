@@ -35,14 +35,20 @@ def _get_provider() -> GmailProvider:
 
 
 @mcp.tool()
-async def search_emails(query: str, max_results: int = 3, exclude_promotions: bool = True) -> str:
+async def search_emails(query: str, max_results: int = 3, focus_only: bool = True) -> str:
     """Search emails by query. Returns ID, sender, date, subject and a short snippet.
 
     TOKEN BUDGET: default max_results=3 (targeted search). Use max_results=5 only for broad overviews.
     Hard cap at 5 — never exceeds this regardless of what you pass.
 
-    DATE FILTERING: use Gmail query syntax to limit scope — this is the primary way to avoid
-    loading old/irrelevant emails:
+    INBOX SCOPE (focus_only):
+      - True (default): only "Primary" tab — excludes Promotions, Social, Updates, Forums.
+        This is what you want 99% of the time.
+      - False: include all categories (Promotions, Social, etc.). Use only if user explicitly
+        asks for newsletters/promotions ("show me my marketing emails").
+
+    DATE FILTERING: use Gmail query syntax to limit scope — primary way to avoid old/irrelevant
+    emails:
       - newer_than:3d   → last 3 days
       - newer_than:1w   → last week
       - after:2026/05/01 → since May 1st
@@ -55,12 +61,10 @@ async def search_emails(query: str, max_results: int = 3, exclude_promotions: bo
     Args:
         query: Gmail search query
         max_results: Max emails (default 3 for targeted, 5 for overview). Hard cap: 5.
-        exclude_promotions: Auto-exclude newsletters/ads (default True).
+        focus_only: Restrict to "Primary" Gmail tab (default True). Excludes Promotions/Social/etc.
     """
-    if exclude_promotions and "-category:promotions" not in query and "-label:category-promotions" not in query:
-        query = f"{query} -category:promotions"
-    logger.info("[search_emails] query=%r max_results=%d", query, max_results)
-    results = await _get_provider().search_emails(query, min(max_results, 5))
+    logger.info("[search_emails] query=%r max_results=%d focus_only=%s", query, max_results, focus_only)
+    results = await _get_provider().search_emails(query, min(max_results, 5), focus_only=focus_only)
     logger.info("[search_emails] → count=%d", len(results))
 
     if not results:

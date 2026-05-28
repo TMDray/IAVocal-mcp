@@ -44,14 +44,22 @@ class GmailProvider(EmailProvider):
         headers = {"Authorization": f"Bearer {token}"}
         return httpx.AsyncClient(timeout=15), headers
 
-    async def search_emails(self, query: str, max_results: int = 10) -> list[Email]:
+    async def search_emails(
+        self, query: str, max_results: int = 10, focus_only: bool = True
+    ) -> list[Email]:
         client, headers = await self._get_client()
         async with client:
             # Scope INBOX explicite — sans labelIds, /messages couvre TOUTES les
             # boîtes (Sent, Drafts, Spam, Trash) → drafts maison remontent dans
             # les recherches. Analogue au fix Outlook 0.1.4.
-            params: dict = {"q": query, "maxResults": max_results, "labelIds": "INBOX"}
-            logger.info("[gmail] GET %s/messages params=%s", GMAIL_API, params)
+            #
+            # focus_only=True (défaut) : restreint à l'onglet "Principal" via
+            # CATEGORY_PERSONAL. Exclut Promotions / Social / Updates / Forums.
+            # Gmail API accepte plusieurs labelIds avec un AND implicite (le mail
+            # doit avoir tous les labels).
+            label_ids = ["INBOX", "CATEGORY_PERSONAL"] if focus_only else ["INBOX"]
+            params: dict = {"q": query, "maxResults": max_results, "labelIds": label_ids}
+            logger.info("[gmail] GET %s/messages params=%s focus_only=%s", GMAIL_API, params, focus_only)
             resp = await client.get(
                 f"{GMAIL_API}/messages",
                 params=params,

@@ -86,6 +86,105 @@ class TestSearchEmailsScopedToInbox:
         assert params["$orderby"] == "receivedDateTime desc"
         assert "$search" not in params
 
+    @pytest.mark.asyncio
+    async def test_search_emails_default_focus_only_adds_filter_when_no_query(self):
+        """focus_only=True (defaut) avec query vide → $filter='inferenceClassification eq focused'."""
+        from vicsia_outlook_mcp.provider import OutlookProvider
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"value": []}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.search_emails("inbox", 10)
+
+        params = mock_client.get.call_args.kwargs["params"]
+        assert params["$filter"] == "inferenceClassification eq 'focused'"
+
+    @pytest.mark.asyncio
+    async def test_search_emails_focus_only_false_omits_filter(self):
+        """focus_only=False → pas de $filter (toutes classifications incluses)."""
+        from vicsia_outlook_mcp.provider import OutlookProvider
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"value": []}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            await provider.search_emails("inbox", 10, focus_only=False)
+
+        params = mock_client.get.call_args.kwargs["params"]
+        assert "$filter" not in params
+
+    @pytest.mark.asyncio
+    async def test_search_emails_focus_only_filters_other_when_has_query(self):
+        """Avec query texte ($search), filtrage focused fait cote Python (Graph ne combine pas $search+$filter)."""
+        from vicsia_outlook_mcp.provider import OutlookProvider
+
+        mock_response = MagicMock()
+        # 2 mails focused + 1 other → on doit recevoir uniquement les 2 focused
+        mock_response.json.return_value = {
+            "value": [
+                {
+                    "id": "msg1",
+                    "subject": "Facture",
+                    "from": {"emailAddress": {"name": "Alice", "address": "a@b.com"}},
+                    "receivedDateTime": "2026-05-25",
+                    "bodyPreview": "Voici la facture",
+                    "inferenceClassification": "focused",
+                },
+                {
+                    "id": "msg2",
+                    "subject": "Newsletter",
+                    "from": {"emailAddress": {"name": "Bob", "address": "b@c.com"}},
+                    "receivedDateTime": "2026-05-26",
+                    "bodyPreview": "Notre newsletter mensuelle",
+                    "inferenceClassification": "other",
+                },
+                {
+                    "id": "msg3",
+                    "subject": "Devis",
+                    "from": {"emailAddress": {"name": "Charles", "address": "c@d.com"}},
+                    "receivedDateTime": "2026-05-27",
+                    "bodyPreview": "Voici le devis",
+                    "inferenceClassification": "focused",
+                },
+            ]
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        provider = OutlookProvider()
+        with patch.object(provider, "_get_client", AsyncMock(return_value=(mock_client, {}))):
+            results = await provider.search_emails("facture", 10)
+
+        # Verifie : $filter pas dans params (incompat $search), filtrage cote Python
+        params = mock_client.get.call_args.kwargs["params"]
+        assert "$filter" not in params
+        assert params["$search"] == '"facture"'
+        # msg2 (other) doit etre exclu — on garde msg1 et msg3
+        assert len(results) == 2
+        result_ids = [r.id for r in results]
+        assert "msg1" in result_ids
+        assert "msg3" in result_ids
+        assert "msg2" not in result_ids
+
 
 class TestReadEmailKeepsFullMailboxAccess:
     """read_email doit pouvoir lire un message dans n'importe quel dossier

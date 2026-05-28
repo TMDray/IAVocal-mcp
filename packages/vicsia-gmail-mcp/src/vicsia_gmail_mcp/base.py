@@ -49,7 +49,9 @@ class EmailProvider(ABC):
     """Interface for email providers (Gmail, Outlook)."""
 
     @abstractmethod
-    async def search_emails(self, query: str, max_results: int = 10) -> list[Email]: ...
+    async def search_emails(
+        self, query: str, max_results: int = 10, focus_only: bool = True
+    ) -> list[Email]: ...
 
     @abstractmethod
     async def read_email(self, email_id: str) -> Email: ...

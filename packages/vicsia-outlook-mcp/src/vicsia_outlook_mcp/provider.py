@@ -44,29 +44,51 @@ class OutlookProvider(EmailProvider):
         headers = {"Authorization": f"Bearer {token}"}
         return httpx.AsyncClient(timeout=15), headers
 
-    async def search_emails(self, query: str, max_results: int = 10) -> list[Email]:
+    async def search_emails(
+        self, query: str, max_results: int = 10, focus_only: bool = True
+    ) -> list[Email]:
         client, headers = await self._get_client()
         async with client:
-            # Graph API: $search and $orderby cannot be combined
+            # Graph API: $search and $filter ne se combinent pas (limitation MS Graph).
+            # Stratégie :
+            #  - Query vide → on peut combiner $filter (focus) + $orderby
+            #  - Query présente → $search + filtrage focused côté Python (post-réception)
+            # Dans les deux cas, on sélectionne inferenceClassification pour pouvoir filtrer.
+            has_query = bool(query and query.lower() not in ("inbox", "all", "*"))
             params: dict = {
                 "$top": max_results,
-                "$select": "id,subject,from,receivedDateTime,bodyPreview",
+                "$select": "id,subject,from,receivedDateTime,bodyPreview,inferenceClassification",
             }
-            if query and query.lower() not in ("inbox", "all", "*"):
+            if has_query:
                 params["$search"] = f'"{query}"'
+                # $filter incompatible avec $search → filtrage post-réception ci-dessous
             else:
                 params["$orderby"] = "receivedDateTime desc"
+                if focus_only:
+                    # focus_only=True (défaut) : restreint à la Focused Inbox d'Outlook
+                    # (sélection automatique MS basée sur l'historique de l'utilisateur)
+                    params["$filter"] = "inferenceClassification eq 'focused'"
 
             # Scope explicite à Inbox — /me/messages couvre toute la mailbox
             # (drafts, sent, deleted, clutter) et $search aussi malgré la doc MS.
             url = f"{GRAPH_API}/me/mailFolders/inbox/messages"
-            logger.info("[outlook] GET %s params=%s", url, {k: v for k, v in params.items() if k != "$select"})
+            logger.info(
+                "[outlook] GET %s params=%s focus_only=%s",
+                url,
+                {k: v for k, v in params.items() if k != "$select"},
+                focus_only,
+            )
             resp = await client.get(url, params=params, headers=headers)
             logger.info("[outlook] ← status=%d", resp.status_code)
             resp.raise_for_status()
 
             results = []
             for msg in resp.json().get("value", []):
+                # Filtrage côté Python si on avait $search (incompatible $filter)
+                if focus_only and has_query:
+                    classification = msg.get("inferenceClassification", "focused")
+                    if classification != "focused":
+                        continue
                 sender = msg.get("from", {}).get("emailAddress", {})
                 results.append(
                     Email(
@@ -77,6 +99,8 @@ class OutlookProvider(EmailProvider):
                         snippet=msg.get("bodyPreview", ""),
                     )
                 )
+                if len(results) >= max_results:
+                    break
             return results
 
     async def read_email(self, email_id: str) -> Email:
